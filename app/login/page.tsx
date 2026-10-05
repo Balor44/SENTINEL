@@ -18,7 +18,7 @@ function LoginForm() {
  
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirect") || "/setup";
+  const redirectTo = searchParams.get("redirect") || "/onboarding";
 
 
   const supabase = createBrowserClient(

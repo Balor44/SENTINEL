@@ -54,7 +54,7 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     // Defaulting to /setup so first-time users finish onboarding. 
     // Your setup route should automatically forward them to /overview if they are already onboarded!
-    url.pathname = '/setup'; 
+    url.pathname = '/onboarding'; 
     return NextResponse.redirect(url);
   }
 
