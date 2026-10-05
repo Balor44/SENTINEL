@@ -30,21 +30,31 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
 
-  const isPublicRoute = request.nextUrl.pathname === '/login';
+  // 1. Expanded Public Routes List
+  const pathname = request.nextUrl.pathname;
+  const isPublicRoute = 
+    pathname === '/' || 
+    pathname.startsWith('/login') || 
+    pathname.startsWith('/auth') || 
+    pathname.startsWith('/api/auth');
 
 
-  // If there's no user and the route isn't /login, kick them to login
+  // 2. Unauthenticated user trying to access protected routes -> send to login
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
+    // Save the route they were trying to access so we can send them there after login
+    url.searchParams.set('redirect', pathname); 
     return NextResponse.redirect(url);
   }
 
 
-  // If they are logged in but try to view the login page, send them to the dashboard
-  if (user && isPublicRoute) {
+  // 3. Logged-in user visiting /login -> send them to the app
+  if (user && pathname.startsWith('/login')) {
     const url = request.nextUrl.clone();
-    url.pathname = '/overview';
+    // Defaulting to /setup so first-time users finish onboarding. 
+    // Your setup route should automatically forward them to /overview if they are already onboarded!
+    url.pathname = '/setup'; 
     return NextResponse.redirect(url);
   }
 

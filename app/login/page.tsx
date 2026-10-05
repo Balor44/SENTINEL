@@ -2,9 +2,9 @@
 
 
 import { useState } from "react";
-import { ShieldCheck, Loader2 } from "lucide-react";
+import { ShieldCheck, Loader2, CheckCircle2 } from "lucide-react";
 import { createBrowserClient } from "@supabase/ssr";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui";
 
 
@@ -13,8 +13,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+  const [success, setSuccess] = useState<string | null>(null);
+ 
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirect") || "/setup";
+
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -24,23 +29,35 @@ export default function LoginPage() {
   async function handleAuth(action: "login" | "signup") {
     setIsLoading(true);
     setError(null);
+    setSuccess(null);
 
 
     try {
-      const { error: authError } = action === "login" 
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
+      if (action === "signup") {
+        const { data, error: authError } = await supabase.auth.signUp({ email, password });
+        if (authError) throw authError;
 
 
-      if (authError) throw authError;
+        if (data.session) {
+          setSuccess("Account created successfully! Preparing workspace...");
+          setTimeout(() => {
+            router.push(redirectTo);
+            router.refresh();
+          }, 1500);
+        } else {
+          setSuccess("Account registered! Please check your email to verify.");
+          setIsLoading(false); 
+        }
+      } else {
+        const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+        if (authError) throw authError;
 
 
-      // Successful auth automatically sets cookies, middleware will route them
-      router.push("/overview");
-      router.refresh();
+        router.push(redirectTo);
+        router.refresh();
+      }
     } catch (err: any) {
       setError(err.message);
-    } finally {
       setIsLoading(false);
     }
   }
@@ -59,8 +76,16 @@ export default function LoginPage() {
 
 
         {error && (
-          <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-center text-sm text-red-400 border border-red-500/20">
+          <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-center text-sm text-red-400">
             {error}
+          </div>
+        )}
+
+
+        {success && (
+          <div className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-center text-sm text-emerald-400">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            {success}
           </div>
         )}
 
@@ -68,43 +93,44 @@ export default function LoginPage() {
         <div className="space-y-4">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Email</label>
-            <input 
-              type="email" 
-              className="input mt-1.5 w-full" 
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)} 
+            <input
+              type="email"
+              className="input mt-1.5 w-full"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               placeholder="operator@northstar.com"
             />
           </div>
-          
+         
           <div>
             <label className="text-xs font-medium text-muted-foreground">Password</label>
-            <input 
-              type="password" 
-              className="input mt-1.5 w-full" 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
+            <input
+              type="password"
+              className="input mt-1.5 w-full"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
             />
           </div>
 
 
           <div className="mt-6 flex flex-col gap-3">
-            <Button 
-              variant="primary" 
-              className="w-full justify-center" 
+            <Button
+              variant="primary"
+              className="w-full justify-center"
               onClick={() => handleAuth("login")}
               disabled={isLoading}
             >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
+              {isLoading && !success ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
             </Button>
-            
-            <Button 
-              variant="ghost" 
-              className="w-full justify-center border border-border" 
+           
+            <Button
+              variant="ghost"
+              className="w-full justify-center border border-border"
               onClick={() => handleAuth("signup")}
               disabled={isLoading}
             >
+              {isLoading && success ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Create Account
             </Button>
           </div>
