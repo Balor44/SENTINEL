@@ -93,13 +93,13 @@ export async function POST(req: Request) {
 
     if (decision.status === "blocked") {
       const { error: blockInsertError } = await supabase.from("transactions").insert({
+        id: crypto.randomUUID(), // 👈 FIX: Explicitly generate ID
         user_id: user.id,
         "agentName": agent.name, 
         amount,
         recipient,
         status: "blocked",
         idempotency_key: idempotencyKey,
-        // Removed type: "payment"
         decision_reason: decision.reason,
         decision_trace: decision.trace,
         event_hash: eventHash,
@@ -120,13 +120,13 @@ export async function POST(req: Request) {
       const { data: pendingTx, error: pendingError } = await supabase
         .from("transactions")
         .insert({
+          id: crypto.randomUUID(), // 👈 FIX: Explicitly generate ID
           user_id: user.id,
           "agentName": agent.name, 
           amount,
           recipient,
           status: "approval_required",
           idempotency_key: idempotencyKey,
-          // Removed type: "payment"
           decision_reason: decision.reason,
           decision_trace: decision.trace,
           event_hash: eventHash,
@@ -155,6 +155,7 @@ export async function POST(req: Request) {
     const { data: reservedTx, error: reserveError } = await supabase
       .from("transactions")
       .insert({
+        id: crypto.randomUUID(), // 👈 FIX: Explicitly generate ID
         user_id: user.id,
         "agentName": agent.name, 
         amount,
@@ -162,7 +163,6 @@ export async function POST(req: Request) {
         status: "processing",
         idempotency_key: idempotencyKey,
         organization_id: agent.organization_id || agent.organizationId, 
-        // Removed type: "payment"
         decision_reason: decision.reason,
         decision_trace: decision.trace, 
         event_hash: eventHash           
