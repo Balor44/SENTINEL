@@ -72,9 +72,9 @@ export async function POST(req: Request) {
     const recipient = String(body.recipient ?? "").trim();
 
 
-    // Fetch Global State & History
+    // Fetch Global State & History (FIXED: agentId -> agent_id and createdAt -> created_at)
     const { data: state } = await supabase.from("app_state").select("fleetFrozen").eq("user_id", user.id).single();
-    const { data: recentTxs } = await supabase.from("transactions").select("*").eq("agentId", agent.id).order("createdAt", { ascending: false }).limit(20);
+    const { data: recentTxs } = await supabase.from("transactions").select("*").eq("agent_id", agent.id).order("created_at", { ascending: false }).limit(20);
 
 
     // 3. Evaluate Policy (Now using BigInt and Kill Switch)
@@ -96,7 +96,7 @@ export async function POST(req: Request) {
       // Audit: Always log blocked attempts to the ledger with the decision trace
       await supabase.from("transactions").insert({
         user_id: user.id,
-        agentId: agent.id,
+        agent_id: agent.id, // FIXED: agent_id
         amount,
         recipient,
         status: "blocked",
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
         decision_reason: decision.reason,
         decision_trace: decision.trace,
         event_hash: eventHash,
-        organization_id: agent.organization_id // Added the missing organization_id here
+        organization_id: agent.organization_id 
       });
 
 
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
         .from("transactions")
         .insert({
           user_id: user.id,
-          agentId: agent.id,
+          agent_id: agent.id, // FIXED: agent_id
           amount,
           recipient,
           status: "approval_required",
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
           decision_reason: decision.reason,
           decision_trace: decision.trace,
           event_hash: eventHash,
-          organization_id: agent.organization_id, // Fixed camelCase to snake_case
+          organization_id: agent.organization_id, 
         })
         .select()
         .single();
@@ -153,16 +153,16 @@ export async function POST(req: Request) {
       .from("transactions")
       .insert({
         user_id: user.id,
-        agentId: agent.id,
+        agent_id: agent.id, // FIXED: agent_id
         amount,
         recipient,
         status: "processing",
         idempotency_key: idempotencyKey,
-        organization_id: agent.organization_id, // Fixed camelCase to snake_case
+        organization_id: agent.organization_id, 
         type: "payment",
         decision_reason: decision.reason,
-        decision_trace: decision.trace, // Review Point 14
-        event_hash: eventHash           // Review Point 15
+        decision_trace: decision.trace, 
+        event_hash: eventHash           
       })
       .select()
       .single();
