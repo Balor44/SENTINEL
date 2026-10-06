@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 export const tempoTestnet = {
   id: 42431,
   name: "Tempo Moderato Testnet",
-  nativeCurrency: { name: "USD", symbol: "USD", decimals: 6 },
+  nativeCurrency: { name: "USD", symbol: "USD", decimals: 18 },
   rpcUrls: { default: { http: ["https://rpc.moderato.tempo.xyz"] } },
   blockExplorers: { default: { name: "Tempo Explorer", url: "https://explorer.moderato.tempo.xyz" } },
   testnet: true,
