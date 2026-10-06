@@ -68,17 +68,25 @@ export async function POST(req: Request) {
     const recipient = String(body.recipient ?? "").trim();
 
 
-    const { data: state } = await supabase.from("app_state").select("fleetFrozen").eq("user_id", user.id).single();
+    // FIXED: fleet_frozen instead of fleetFrozen
+    const { data: state, error: stateError } = await supabase.from("app_state").select("fleet_frozen").eq("user_id", user.id).single();
+    if (stateError && stateError.code !== 'PGRST116') {
+      console.warn("App State Error (Safe to ignore if app_state table is empty):", stateError.message);
+    }
     
-    // Strict snake_case queries
-    const { data: recentTxs } = await supabase.from("transactions").select("*").eq("agent_id", agent.id).order("created_at", { ascending: false }).limit(20);
+    // Check for recent txs error
+    const { data: recentTxs, error: txError } = await supabase.from("transactions").select("*").eq("agent_id", agent.id).order("created_at", { ascending: false }).limit(20);
+    if (txError) {
+      console.error("Supabase GET Transactions Error:", txError.message);
+      // We don't crash here, we let it evaluate with an empty array so we can see the Insert error if one exists.
+    }
 
 
     const decision = evaluatePayment(agent, {
       amount,
       recipient,
       transactions: recentTxs || [],
-      fleetFrozen: state?.fleetFrozen || false,
+      fleetFrozen: state?.fleet_frozen || false,
     });
 
 
@@ -87,7 +95,7 @@ export async function POST(req: Request) {
 
 
     if (decision.status === "blocked") {
-      await supabase.from("transactions").insert({
+      const { error: blockInsertError } = await supabase.from("transactions").insert({
         user_id: user.id,
         agent_id: agent.id,
         amount,
@@ -100,6 +108,11 @@ export async function POST(req: Request) {
         event_hash: eventHash,
         organization_id: agent.organization_id || agent.organizationId 
       });
+
+
+      if (blockInsertError) {
+         console.error("BLOCKED INSERT ERROR:", blockInsertError.message);
+      }
 
 
       return NextResponse.json({ error: decision.reason, trace: decision.trace, status: "blocked" }, { status: 403 });
@@ -126,7 +139,10 @@ export async function POST(req: Request) {
         .single();
 
 
-      if (pendingError) throw new Error("Failed to create pending approval record");
+      if (pendingError) {
+        console.error("APPROVAL INSERT ERROR:", pendingError.message);
+        throw new Error(`DB Error: ${pendingError.message}`);
+      }
 
 
       return NextResponse.json({
@@ -149,7 +165,7 @@ export async function POST(req: Request) {
         status: "processing",
         idempotency_key: idempotencyKey,
         organization_id: agent.organization_id || agent.organizationId, 
-        type: "payment",
+        type: "payment", // <-- If this is what is failing, the error will tell us!
         decision_reason: decision.reason,
         decision_trace: decision.trace, 
         event_hash: eventHash           
@@ -159,8 +175,9 @@ export async function POST(req: Request) {
 
 
     if (reserveError || !reservedTx) {
-      console.error("Supabase Insert Error:", reserveError);
-      throw new Error("Failed to reserve transaction state");
+      console.error("RESERVATION INSERT ERROR:", reserveError?.message);
+      // Return the EXACT error to the frontend
+      return NextResponse.json({ error: `Supabase Insert Failed: ${reserveError?.message}` }, { status: 500 });
     }
 
 
@@ -175,7 +192,6 @@ export async function POST(req: Request) {
     }
 
 
-    // Strict snake_case updates for tx_hash and spent_today
     await Promise.all([
       supabase.from("transactions").update({
         status: "settled",
@@ -195,9 +211,9 @@ export async function POST(req: Request) {
       txHash: execution.txHash,
       status: "settled",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Payment intent error:", error);
-    return NextResponse.json({ error: "Internal payment error" }, { status: 500 });
+    return NextResponse.json({ error: error.message || "Internal payment error" }, { status: 500 });
   }
 }
 
