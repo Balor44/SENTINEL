@@ -31,7 +31,7 @@ export async function POST(req: Request) {
 
 
     const body = await req.json();
-    
+   
     // 1. Idempotency Enforcer: Ensure frontend passed a unique key
     const idempotencyKey = body.idempotencyKey;
     if (!idempotencyKey) {
@@ -104,7 +104,8 @@ export async function POST(req: Request) {
         type: "payment",
         decision_reason: decision.reason,
         decision_trace: decision.trace,
-        event_hash: eventHash
+        event_hash: eventHash,
+        organization_id: agent.organization_id // Added the missing organization_id here
       });
 
 
@@ -127,7 +128,8 @@ export async function POST(req: Request) {
           type: "payment",
           decision_reason: decision.reason,
           decision_trace: decision.trace,
-          event_hash: eventHash
+          event_hash: eventHash,
+          organization_id: agent.organization_id, // Fixed camelCase to snake_case
         })
         .select()
         .single();
@@ -136,8 +138,8 @@ export async function POST(req: Request) {
       if (pendingError) throw new Error("Failed to create pending approval record");
 
 
-      return NextResponse.json({ 
-        error: "Human approval required", 
+      return NextResponse.json({
+        error: "Human approval required",
         status: "approval_required",
         message: decision.reason,
         transactionId: pendingTx?.id,
@@ -154,8 +156,9 @@ export async function POST(req: Request) {
         agentId: agent.id,
         amount,
         recipient,
-        status: "processing", 
+        status: "processing",
         idempotency_key: idempotencyKey,
+        organization_id: agent.organization_id, // Fixed camelCase to snake_case
         type: "payment",
         decision_reason: decision.reason,
         decision_trace: decision.trace, // Review Point 14
@@ -166,6 +169,7 @@ export async function POST(req: Request) {
 
 
     if (reserveError || !reservedTx) {
+      console.error("Supabase Insert Error:", reserveError);
       throw new Error("Failed to reserve transaction state");
     }
 
@@ -190,7 +194,7 @@ export async function POST(req: Request) {
         status: "settled",
         txHash: execution.txHash
       }).eq("id", reservedTx.id),
-      
+     
       supabase.from("agents").update({
         spentToday: Number(agent.spentToday || 0) + amount,
         balance: Math.max(Number(agent.balance || 0) - amount, 0),
