@@ -10,7 +10,6 @@ export const dynamic = "force-dynamic";
 const TEMPO_TOKEN_ADDRESS = "0x20c0000000000000000000000000000000000000";
 
 
-// Helper to hash events for an immutable, tamper-evident audit ledger (Review Point 15)
 function generateEventHash(payload: any) {
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
@@ -32,14 +31,12 @@ export async function POST(req: Request) {
 
     const body = await req.json();
    
-    // 1. Idempotency Enforcer: Ensure frontend passed a unique key
     const idempotencyKey = body.idempotencyKey;
     if (!idempotencyKey) {
       return NextResponse.json({ error: "Missing idempotencyKey in request" }, { status: 400 });
     }
 
 
-    // 2. Check if this request was already processed (Double-Spend Protection)
     const { data: existingTx } = await supabase
       .from("transactions")
       .select("*")
@@ -51,13 +48,12 @@ export async function POST(req: Request) {
       return NextResponse.json({
         success: existingTx.status === "settled",
         status: existingTx.status,
-        txHash: existingTx.txHash,
+        txHash: existingTx.tx_hash || existingTx.txHash,
         message: "Returned existing idempotent result"
       });
     }
 
 
-    // Fetch Agent
     const { data: agent } = await supabase
       .from("agents")
       .select("*")
@@ -72,12 +68,12 @@ export async function POST(req: Request) {
     const recipient = String(body.recipient ?? "").trim();
 
 
-    // Fetch Global State & History (FIXED: agentId -> agent_id and createdAt -> created_at)
     const { data: state } = await supabase.from("app_state").select("fleetFrozen").eq("user_id", user.id).single();
+    
+    // Strict snake_case queries
     const { data: recentTxs } = await supabase.from("transactions").select("*").eq("agent_id", agent.id).order("created_at", { ascending: false }).limit(20);
 
 
-    // 3. Evaluate Policy (Now using BigInt and Kill Switch)
     const decision = evaluatePayment(agent, {
       amount,
       recipient,
@@ -86,17 +82,14 @@ export async function POST(req: Request) {
     });
 
 
-    // Create the immutable audit payload
     const eventPayload = { agentId: agent.id, amount, recipient, decision: decision.status, time: Date.now() };
     const eventHash = generateEventHash(eventPayload);
 
 
-    // 4a. BLOCKED
     if (decision.status === "blocked") {
-      // Audit: Always log blocked attempts to the ledger with the decision trace
       await supabase.from("transactions").insert({
         user_id: user.id,
-        agent_id: agent.id, // FIXED: agent_id
+        agent_id: agent.id,
         amount,
         recipient,
         status: "blocked",
@@ -105,7 +98,7 @@ export async function POST(req: Request) {
         decision_reason: decision.reason,
         decision_trace: decision.trace,
         event_hash: eventHash,
-        organization_id: agent.organization_id 
+        organization_id: agent.organization_id || agent.organizationId 
       });
 
 
@@ -113,14 +106,12 @@ export async function POST(req: Request) {
     }
 
 
-    // 4b. APPROVAL REQUIRED
     if (decision.status === "approval_required") {
-      // Create pending record for human approval queue with the full decision trace
       const { data: pendingTx, error: pendingError } = await supabase
         .from("transactions")
         .insert({
           user_id: user.id,
-          agent_id: agent.id, // FIXED: agent_id
+          agent_id: agent.id,
           amount,
           recipient,
           status: "approval_required",
@@ -129,7 +120,7 @@ export async function POST(req: Request) {
           decision_reason: decision.reason,
           decision_trace: decision.trace,
           event_hash: eventHash,
-          organization_id: agent.organization_id, 
+          organization_id: agent.organization_id || agent.organizationId, 
         })
         .select()
         .single();
@@ -148,17 +139,16 @@ export async function POST(req: Request) {
     }
 
 
-    // 4c. APPROVED -> RESERVATION: Create a 'PROCESSING' record in the DB *before* hitting the blockchain
     const { data: reservedTx, error: reserveError } = await supabase
       .from("transactions")
       .insert({
         user_id: user.id,
-        agent_id: agent.id, // FIXED: agent_id
+        agent_id: agent.id,
         amount,
         recipient,
         status: "processing",
         idempotency_key: idempotencyKey,
-        organization_id: agent.organization_id, 
+        organization_id: agent.organization_id || agent.organizationId, 
         type: "payment",
         decision_reason: decision.reason,
         decision_trace: decision.trace, 
@@ -174,29 +164,26 @@ export async function POST(req: Request) {
     }
 
 
-    // 5. Execute Web3 Transaction
     const execution = await executeTempoPayment(
      agent as any, amount, recipient, TEMPO_TOKEN_ADDRESS, body.memo
     );
 
 
-    // 6. Settle or Rollback State Machine
     if (!execution.success) {
-      // Rollback: Mark as failed so it doesn't count against their daily limit
       await supabase.from("transactions").update({ status: "failed", error: execution.error }).eq("id", reservedTx.id);
       return NextResponse.json({ error: execution.error || "Tempo execution failed" }, { status: 500 });
     }
 
 
-    // Success: Update the reservation to SETTLED and update Agent balances atomically
+    // Strict snake_case updates for tx_hash and spent_today
     await Promise.all([
       supabase.from("transactions").update({
         status: "settled",
-        txHash: execution.txHash
+        tx_hash: execution.txHash
       }).eq("id", reservedTx.id),
      
       supabase.from("agents").update({
-        spentToday: Number(agent.spentToday || 0) + amount,
+        spent_today: Number(agent.spent_today || agent.spentToday || 0) + amount,
         balance: Math.max(Number(agent.balance || 0) - amount, 0),
         payments: Number(agent.payments || 0) + 1,
       }).eq("id", agent.id)
