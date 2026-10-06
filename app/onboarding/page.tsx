@@ -1,6 +1,8 @@
 "use client";
 
 
+
+
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -10,11 +12,17 @@ import { Button } from "@/components/ui";
 import { WalletConnection } from "@/components/wallet-connection";
 
 
+
+
 const steps = ["Organization", "Wallet", "Agent", "Policy", "Fund", "Test payment"];
 const DRAFT_KEY = "sentinel_onboarding_draft";
 
 
+
+
 type WalletMode = "created" | "imported" | "connected" | "";
+
+
 
 
 type Draft = {
@@ -24,9 +32,13 @@ type Draft = {
 };
 
 
+
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
+
+
 
 
   const [org, setOrg] = useState("");
@@ -34,17 +46,25 @@ export default function OnboardingPage() {
   const [purpose, setPurpose] = useState("");
 
 
+
+
   const [daily, setDaily] = useState("100");
   const [tx, setTx] = useState("10");
   const [approval, setApproval] = useState("25");
+
+
 
 
   const [fund, setFund] = useState("");
   const [recipient, setRecipient] = useState("");
 
 
+
+
   const [walletMode, setWalletMode] = useState<WalletMode>("");
   const [walletAddress, setWalletAddress] = useState("");
+
+
 
 
   const [status, setStatus] = useState("");
@@ -53,13 +73,19 @@ export default function OnboardingPage() {
   const [isRedirecting, setIsRedirecting] = useState(false);
 
 
+
+
   const { isConnected, address, chain } = useAccount();
   const { signTypedDataAsync } = useSignTypedData();
   const { switchChainAsync } = useSwitchChain();
 
 
+
+
   useEffect(() => {
     let cancelled = false;
+
+
 
 
     async function loadSetup() {
@@ -69,6 +95,8 @@ export default function OnboardingPage() {
           try {
             const draft = JSON.parse(saved) as Draft;
             if (cancelled) return;
+
+
 
 
             setStep(Math.min(Math.max(Number(draft.step) || 0, 0), 5));
@@ -88,11 +116,16 @@ export default function OnboardingPage() {
         }
 
 
+
+
         const response = await fetch("/api/setup", { cache: "no-store" });
         if (!response.ok) throw new Error("Unable to load Sentinel setup.");
 
+
         const data = await response.json();
         if (cancelled) return;
+
+
 
 
         if (data?.setup?.onboardingComplete) {
@@ -102,8 +135,12 @@ export default function OnboardingPage() {
         }
 
 
+
+
         if (data?.setup?.treasuryWallet) setWalletAddress(data.setup.treasuryWallet);
         if (data?.setup?.walletMode) setWalletMode(data.setup.walletMode);
+
+
 
 
         setReady(true);
@@ -114,9 +151,13 @@ export default function OnboardingPage() {
     }
 
 
+
+
     loadSetup();
     return () => { cancelled = true; };
   }, [router]);
+
+
 
 
   useEffect(() => {
@@ -127,11 +168,15 @@ export default function OnboardingPage() {
   }, [isConnected, address, walletMode]);
 
 
+
+
   useEffect(() => {
     if (!ready) return;
     const draft: Draft = { step, org, agent, purpose, daily, tx, approval, fund, recipient, walletMode, walletAddress };
     localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
   }, [ready, step, org, agent, purpose, daily, tx, approval, fund, recipient, walletMode, walletAddress]);
+
+
 
 
   async function post(body: any) {
@@ -144,6 +189,8 @@ export default function OnboardingPage() {
     if (!response.ok) throw new Error(data?.error || "Setup failed.");
     return data;
   }
+
+
 
 
   function validateStep() {
@@ -174,6 +221,8 @@ export default function OnboardingPage() {
   }
 
 
+
+
   async function next() {
     setStatus("");
     const validationError = validateStep();
@@ -183,7 +232,11 @@ export default function OnboardingPage() {
     }
 
 
+
+
     setIsSaving(true);
+
+
 
 
     try {
@@ -192,6 +245,7 @@ export default function OnboardingPage() {
         let checkRes = await fetch("/api/setup", { cache: "no-store" });
         let checkData = await checkRes.json();
         let exists = checkData.agents?.find((item: any) => item.name === agent);
+
 
         if (!exists?.id) {
           console.log("Server memory wipe detected. Auto-healing agent state...");
@@ -213,8 +267,11 @@ export default function OnboardingPage() {
       // -------------------------------------------------------------------------------------
 
 
+
+
       if (step === 0) await post({ organizationName: org.trim() });
       if (step === 1) await post({ treasuryReady: true, treasuryWallet: walletAddress || address || "", walletMode });
+
 
       if (step === 2) {
         await post({
@@ -231,6 +288,8 @@ export default function OnboardingPage() {
       }
 
 
+
+
       if (step === 3) {
         const setupResponse = await fetch("/api/setup", { cache: "no-store" });
         const setupData = await setupResponse.json();
@@ -245,6 +304,8 @@ export default function OnboardingPage() {
       }
 
 
+
+
       if (step === 4) {
         const setupResponse = await fetch("/api/setup", { cache: "no-store" });
         const setupData = await setupResponse.json();
@@ -254,11 +315,15 @@ export default function OnboardingPage() {
       }
 
 
+
+
       if (step === 5) {
         const setupResponse = await fetch("/api/setup", { cache: "no-store" });
         const setupData = await setupResponse.json();
         const first = setupData.agents?.find((item: any) => item.name.toLowerCase() === agent.trim().toLowerCase());
         if (!first?.id) throw new Error("Agent missing. Please refresh and try again.");
+
+
 
 
         let authorization = null;
@@ -269,6 +334,8 @@ export default function OnboardingPage() {
           if (chain?.id !== 42431) await switchChainAsync({ chainId: 42431 });
 
 
+
+
           authorization = await signTypedDataAsync({
             domain: { name: "Tempo", version: "1", chainId: 42431 },
             types: { Authorization: [{ name: "delegate", type: "address" }, { name: "expiry", type: "uint256" }] },
@@ -276,6 +343,8 @@ export default function OnboardingPage() {
             message: { delegate: serviceAddress as `0x${string}`, expiry: BigInt(Math.floor(Date.now() / 1000) + 31536000) },
           });
         }
+
+
 
 
         const payment = await fetch("/api/payment-intents", {
@@ -289,18 +358,25 @@ export default function OnboardingPage() {
         });
 
 
+
+
         const data = await payment.json().catch(() => ({}));
         if (!payment.ok) throw new Error(data?.intent?.reason || data?.error || "Tempo payment failed.");
+
+
 
 
         await post({ complete: true });
         document.cookie = "sentinel_onboarding_complete=true; path=/; max-age=31536000; samesite=lax";
         localStorage.removeItem(DRAFT_KEY);
 
+
         setIsRedirecting(true);
         router.replace("/overview");
         return;
       }
+
+
 
 
       setStep((current) => Math.min(current + 1, 5));
@@ -312,11 +388,15 @@ export default function OnboardingPage() {
   }
 
 
+
+
   function back() {
     if (isSaving) return;
     setStatus("");
     setStep((current) => Math.max(current - 1, 0));
   }
+
+
 
 
   if (!ready || isRedirecting) {
@@ -326,6 +406,8 @@ export default function OnboardingPage() {
       </div>
     );
   }
+
+
 
 
   return (
@@ -438,6 +520,8 @@ export default function OnboardingPage() {
 }
 
 
+
+
 function Step({ icon, title, text, children }: { icon: ReactNode; title: string; text: string; children?: ReactNode }) {
   return (
     <div>
@@ -449,5 +533,3 @@ function Step({ icon, title, text, children }: { icon: ReactNode; title: string;
 function Field({ label, value, set }: { label: string; value: string; set: (value: string) => void }) {
   return (<div><label className="text-xs text-muted-foreground">{label}</label><input className="input mt-2" type="number" min="0" step="0.01" value={value} onChange={(e) => set(e.target.value)} /></div>);
 }
-
-
