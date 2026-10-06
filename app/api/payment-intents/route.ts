@@ -73,7 +73,6 @@ export async function POST(req: Request) {
       console.warn("App State Error (Safe to ignore if app_state table is empty):", stateError.message);
     }
     
-    // 👇 FIXED: Query transactions using agentName instead of agent_id
     const { data: recentTxs, error: txError } = await supabase.from("transactions").select("*").eq("agentName", agent.name).order("created_at", { ascending: false }).limit(20);
     if (txError) {
       console.error("Supabase GET Transactions Error:", txError.message);
@@ -95,12 +94,12 @@ export async function POST(req: Request) {
     if (decision.status === "blocked") {
       const { error: blockInsertError } = await supabase.from("transactions").insert({
         user_id: user.id,
-        "agentName": agent.name, // 👇 FIXED: Use agentName
+        "agentName": agent.name, 
         amount,
         recipient,
         status: "blocked",
         idempotency_key: idempotencyKey,
-        type: "payment",
+        // Removed type: "payment"
         decision_reason: decision.reason,
         decision_trace: decision.trace,
         event_hash: eventHash,
@@ -122,12 +121,12 @@ export async function POST(req: Request) {
         .from("transactions")
         .insert({
           user_id: user.id,
-          "agentName": agent.name, // 👇 FIXED: Use agentName
+          "agentName": agent.name, 
           amount,
           recipient,
           status: "approval_required",
           idempotency_key: idempotencyKey,
-          type: "payment",
+          // Removed type: "payment"
           decision_reason: decision.reason,
           decision_trace: decision.trace,
           event_hash: eventHash,
@@ -157,13 +156,13 @@ export async function POST(req: Request) {
       .from("transactions")
       .insert({
         user_id: user.id,
-        "agentName": agent.name, // 👇 FIXED: Use agentName
+        "agentName": agent.name, 
         amount,
         recipient,
         status: "processing",
         idempotency_key: idempotencyKey,
         organization_id: agent.organization_id || agent.organizationId, 
-        type: "payment", 
+        // Removed type: "payment"
         decision_reason: decision.reason,
         decision_trace: decision.trace, 
         event_hash: eventHash           
