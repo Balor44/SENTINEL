@@ -27,12 +27,26 @@ export async function GET(req: Request, context: { params: Promise<any> }) {
     if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
 
+    // Lookup organization membership
+    const { data: member } = await supabase
+      .from("organization_members")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .single();
+
+
+    if (!member) {
+      return NextResponse.json({ error: "User does not belong to any organization" }, { status: 403 });
+    }
+
+
     const { data: agent, error } = await supabase
       .from("agents")
       .select("*")
       .eq("id", agentId)
-      // Extra safety check alongside RLS
-      .eq("user_id", user.id)
+      // Extra safety check alongside RLS: Ensure agent belongs to their org
+      .eq("organization_id", member.organization_id)
       .single();
 
 
@@ -58,9 +72,28 @@ export async function PATCH(req: Request, context: { params: Promise<any> }) {
 
     const resolvedParams = await context.params;
     const agentId = Object.values(resolvedParams)[0] as string;
-    
+   
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+
+    // Lookup organization membership and Role
+    const { data: member } = await supabase
+      .from("organization_members")
+      .select("organization_id, role")
+      .eq("user_id", user.id)
+      .limit(1)
+      .single();
+
+
+    if (!member) {
+      return NextResponse.json({ error: "User does not belong to any organization" }, { status: 403 });
+    }
+    
+    // RBAC: Only Owners and Admins can modify Agent Policies
+    if (member.role === 'viewer' || member.role === 'operator') {
+       return NextResponse.json({ error: "Only Admins and Owners can modify policies." }, { status: 403 });
+    }
 
 
     const body = await req.json();
@@ -84,7 +117,8 @@ export async function PATCH(req: Request, context: { params: Promise<any> }) {
       .from("agents")
       .update(updateData)
       .eq("id", agentId)
-      .eq("user_id", user.id);
+      // Enforce modification only happens within their own org
+      .eq("organization_id", member.organization_id);
 
 
     if (error) throw error;

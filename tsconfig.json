@@ -5,7 +5,7 @@
     "paths": { 
       "@/*": ["./*"]
     },
-    "target": "ES2017",
+    "target": "es2020",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": false,
     "skipLibCheck": true,

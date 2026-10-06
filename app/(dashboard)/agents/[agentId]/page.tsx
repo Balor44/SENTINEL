@@ -3,25 +3,30 @@
 
 
 import Link from "next/link";
-import { ArrowLeft, ArrowUpRight, Bot, Copy, MoreHorizontal, Pause, Play, ShieldCheck, WalletCards, Loader2, Save, X } from "lucide-react";
+import { 
+  ArrowLeft, Bot, Copy, ShieldCheck, WalletCards, 
+  Loader2, Save, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, PauseCircle, PlayCircle
+} from "lucide-react";
 import { use, useState, useEffect } from "react";
 import { money } from "@/lib/utils";
 import { Badge, Button, ProgressBar, StatCard } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
-import type { Agent, Transaction } from "@/types"; 
+import type { Agent, Transaction } from "@/types";
 import { WalletConnection } from "@/components/wallet-connection";
 import { useSendTransaction } from "wagmi";
 import { parseEther } from "viem";
 
 
 export default function AgentDetailPage({ params }: { params: Promise<{ agentid: string }> }) {
-  // Extract the lowercase agentid mapped from the folder structure
   const { agentid } = use(params);
-  const agentId = agentid; 
+  const agentId = agentid;
  
   const [agent, setAgent] = useState<Agent | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // RBAC State
+  const [userRole, setUserRole] = useState<"owner" | "admin" | "operator" | "viewer">("admin"); 
  
   // Form and Edit State
   const [isEditing, setIsEditing] = useState(false);
@@ -31,22 +36,21 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
   const [editAllowlist, setEditAllowlist] = useState("");
 
 
-  // Wagmi hook for sending native testnet tokens
   const { sendTransaction, isPending } = useSendTransaction();
 
 
   useEffect(() => {
-    // Fetch live agent and transaction data
     Promise.all([
       fetch(`/api/agents/${agentId}`, { cache: "no-store" }).then(res => res.json()),
       fetch("/api/transactions", { cache: "no-store" }).then(res => res.json())
     ]).then(([agentData, txData]) => {
       if (agentData.agent) {
         setAgent(agentData.agent);
-        // Pre-fill the form state with current live data
         setEditBudget(String(agentData.agent.dailyBudget));
         setEditThreshold(String(agentData.agent.approvalThreshold));
         setEditAllowlist((agentData.agent.recipientAllowlist || []).join(", "));
+        
+        if (agentData.role) setUserRole(agentData.role);
       }
       if (txData.transactions) {
         setTransactions(txData.transactions.filter((t: Transaction) => t.agentId === agentId));
@@ -68,14 +72,12 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
         body: JSON.stringify({
           dailyBudget: Number(editBudget),
           approvalThreshold: Number(editThreshold),
-          // Clean up the comma-separated string into a clean array
           recipientAllowlist: editAllowlist.split(",").map(s => s.trim()).filter(Boolean)
         })
       });
 
 
       if (res.ok) {
-        // Force the page to refresh and pull the new limits from the server
         window.location.reload();
       } else {
         const data = await res.json();
@@ -89,13 +91,25 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
   };
 
 
+  const handleToggleStatus = async () => {
+    if (!agent) return;
+    const newStatus = agent.status === "active" ? "paused" : "active";
+    
+    setAgent({ ...agent, status: newStatus });
+    
+    await fetch(`/api/agents/${agentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus })
+    });
+  };
+
+
   const handleDeposit = () => {
     if (!agent || !agent.walletAddress) return;
-    
-    // Sends 100 native tokens (TMP) to the Agent's wallet address
     sendTransaction({
       to: agent.walletAddress as `0x${string}`,
-      value: parseEther("100"), 
+      value: parseEther("100"),
     });
   };
 
@@ -121,6 +135,9 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
   }
 
 
+  const canEdit = userRole === "owner" || userRole === "admin";
+
+
   return (
     <div>
       <Link href="/agents" className="mb-6 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-white">
@@ -134,21 +151,21 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
         description={agent.description}
         action={
           <div className="flex items-center gap-3">
-            {/* Native Wagmi connection modal */}
+            <Badge tone={agent.status === "active" ? "success" : "warning"}>{agent.status}</Badge>
             <WalletConnection compact />
-            
-            <Button 
-              variant="primary" 
-              onClick={handleDeposit}
-              disabled={isPending}
-            >
+           
+            <Button variant="primary" onClick={handleDeposit} disabled={isPending}>
               <WalletCards className="mr-2 h-4 w-4" />
-              {isPending ? "Confirm in Wallet..." : "Deposit 100 TMP"}
+              {isPending ? "Confirming..." : "Deposit 100 TMP"}
             </Button>
-            
-            <Button variant="ghost">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
+
+
+            {canEdit && (
+              <Button variant="ghost" onClick={handleToggleStatus} className={agent.status === 'active' ? 'text-amber-400 hover:text-amber-300' : 'text-emerald-400 hover:text-emerald-300'}>
+                {agent.status === 'active' ? <PauseCircle className="mr-2 h-4 w-4" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+                {agent.status === 'active' ? "Pause Agent" : "Resume Agent"}
+              </Button>
+            )}
           </div>
         }
       />
@@ -162,13 +179,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
 
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-        {/* Dynamic Policy Editor Section */}
         <section className="panel p-5">
           <div className="flex items-center justify-between">
             <div className="eyebrow">Policy controls</div>
-            {!isEditing ? (
+            {canEdit && !isEditing && (
               <Button onClick={() => setIsEditing(true)} className="h-7 px-2 text-xs">Edit</Button>
-            ) : (
+            )}
+            {canEdit && isEditing && (
               <Button onClick={() => setIsEditing(false)} className="h-7 px-2 text-xs" variant="ghost">Cancel</Button>
             )}
           </div>
@@ -188,27 +205,22 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Daily Budget ($)</label>
                   <input
-                    type="number"
-                    className="input w-full"
-                    value={editBudget}
-                    onChange={(e) => setEditBudget(e.target.value)}
+                    type="number" className="input w-full"
+                    value={editBudget} onChange={(e) => setEditBudget(e.target.value)}
                   />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Approval Threshold ($)</label>
                   <input
-                    type="number"
-                    className="input w-full"
-                    value={editThreshold}
-                    onChange={(e) => setEditThreshold(e.target.value)}
+                    type="number" className="input w-full"
+                    value={editThreshold} onChange={(e) => setEditThreshold(e.target.value)}
                   />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Recipient Allowlist (Comma separated)</label>
                   <textarea
                     className="input min-h-20 w-full resize-none"
-                    value={editAllowlist}
-                    onChange={(e) => setEditAllowlist(e.target.value)}
+                    value={editAllowlist} onChange={(e) => setEditAllowlist(e.target.value)}
                     placeholder="e.g. CloudVendor, 0x123...abc"
                   />
                 </div>
@@ -222,6 +234,11 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
                 <Rule label="Max transaction" value={money(agent.transactionLimit ?? agent.txLimit)} />
                 <Rule label="Approval threshold" value={money(agent.approvalThreshold)} />
                 <Rule label="Allowed token" value="USD" />
+                {!canEdit && (
+                   <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
+                     <AlertCircle className="h-3 w-3" /> You have Viewer access.
+                   </div>
+                )}
               </>
             )}
           </div>
@@ -252,32 +269,88 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
 
       <section className="panel mt-4">
         <div className="border-b border-border p-5">
-          <div className="eyebrow">Activity</div>
-          <h2 className="mt-1 text-base font-semibold text-white">Recent payments</h2>
+          <div className="eyebrow">Audit Ledger (Point 4)</div>
+          <h2 className="mt-1 text-base font-semibold text-white">Recent payment intents</h2>
         </div>
-        <div className="divide-y divide-border/70">
+        <div className="flex flex-col">
           {transactions.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">No recent payments for this agent.</div>
           ) : (
-            transactions.slice(0, 5).map((tx) => (
-              <div key={tx.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="text-sm font-medium text-white">{tx.purpose ?? tx.reason ?? "Agent transfer"}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{tx.recipient} · {tx.time ?? new Date(tx.createdAt).toLocaleTimeString()}</div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <Badge tone={tx.status === "settled" ? "success" : tx.status === "blocked" ? "danger" : "warning"}>
-                    {tx.status}
-                  </Badge>
-                  <span className="text-sm font-medium text-white">{money(tx.amount)}</span>
-                </div>
-              </div>
-            ))
+            transactions.slice(0, 10).map((tx) => <TransactionRow key={tx.id} tx={tx} />)
           )}
         </div>
       </section>
     </div>
   );
+}
+
+
+function TransactionRow({ tx }: { tx: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const isBlocked = tx.status === "blocked";
+  const hasTrace = tx.decision_trace && tx.decision_trace.length > 0;
+
+
+  return (
+    <div className="flex flex-col border-b border-border/70 last:border-0">
+      <div 
+        className={`flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between transition-colors ${hasTrace ? "cursor-pointer hover:bg-white/5" : ""}`}
+        onClick={() => hasTrace && setExpanded(!expanded)}
+      >
+        <div>
+          <div className="text-sm font-medium text-white flex items-center gap-2">
+            {tx.purpose ?? tx.type ?? "Agent payment intent"}
+            {hasTrace && <Badge tone="purple">Trace</Badge>}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{tx.recipient} · {tx.time ?? new Date(tx.createdAt).toLocaleTimeString()}</div>
+        </div>
+        <div className="flex items-center gap-4">
+          <Badge tone={tx.status === "settled" ? "success" : isBlocked ? "danger" : "warning"}>
+            {tx.status}
+          </Badge>
+          <span className="text-sm font-medium text-white">{money(tx.amount)}</span>
+          {hasTrace && (expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />)}
+        </div>
+      </div>
+
+
+      {expanded && hasTrace && (
+        <div className="px-5 pb-5 pt-1">
+          <div className="rounded-md bg-black/20 p-4 border border-border/50">
+            <div className="text-xs font-semibold text-white mb-3 flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-purple-400" />
+              Policy Engine Evaluation Log
+            </div>
+            
+            {tx.decision_reason && (
+              <div className={`text-xs mb-3 p-2 rounded ${isBlocked ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                <span className="font-medium">Conclusion:</span> {tx.decision_reason}
+              </div>
+            )}
+            
+            <div className="flex flex-col gap-2">
+              {tx.decision_trace.map((step: string, idx: number) => {
+                const failed = isBlocked && idx === tx.decision_trace.length - 1; 
+                return (
+                  <div key={idx} className="flex items-start gap-2 text-xs">
+                    {failed ? <AlertCircle className="h-4 w-4 text-red-500 shrink-0" /> : <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
+                    <span className={failed ? "text-red-400" : "text-muted-foreground"}>{step}</span>
+                  </div>
+                )
+              })}
+              
+              {tx.event_hash && (
+                 <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+                   <span>Cryptographic Event Hash:</span>
+                   <span>{tx.event_hash}</span>
+                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 
@@ -289,3 +362,5 @@ function Rule({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+

@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+
 export const dynamic = "force-dynamic";
 
 
@@ -27,12 +28,36 @@ export async function GET() {
     );
 
 
-    // RLS ensures they only get their own agents
-    const { data, error } = await supabase.from("agents").select("*");
-    
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+
+    // MULTI-TENANCY FIX: Fetch the user's active organization ID
+    const { data: member } = await supabase
+      .from("organization_members")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .single();
+
+
+    if (!member) {
+      return NextResponse.json({ error: "User does not belong to any organization" }, { status: 403 });
+    }
+
+
+    // Now fetch agents strictly scoped to their organization
+    const { data, error } = await supabase
+      .from("agents")
+      .select("*")
+      .eq("organization_id", member.organization_id)
+      .order("createdAt", { ascending: false });
+   
     if (error) throw error;
     return NextResponse.json(data || [] );
-    
+   
   } catch (error: any) {
     return NextResponse.json({ error: error.message || "Failed to fetch agents" }, { status: 500 });
   }
@@ -56,13 +81,32 @@ export async function POST(req: Request) {
     }
 
 
-    const rawBody = await req.json();
+    // MULTI-TENANCY FIX: Retrieve the user's organization context & Role
+    const { data: member } = await supabase
+      .from("organization_members")
+      .select("organization_id, role")
+      .eq("user_id", user.id)
+      .limit(1)
+      .single();
+
+
+    if (!member) {
+      return NextResponse.json({ error: "User does not belong to any organization" }, { status: 403 });
+    }
     
+    // Role-Based Access Control (RBAC): Viewers cannot create agents
+    if (member.role === 'viewer') {
+       return NextResponse.json({ error: "Viewers cannot create agents." }, { status: 403 });
+    }
+
+
+    const rawBody = await req.json();
+   
     // 3. Validate against the strict Zod schema
     const validatedData = agentSchema.parse(rawBody);
 
 
-    // 4. Safely insert with the user_id locked in
+    // 4. Safely insert explicitly tied to the organization
     const { error: dbError } = await supabase.from("agents").insert({
       id: validatedData.id,
       name: validatedData.name,
@@ -70,9 +114,11 @@ export async function POST(req: Request) {
       address: validatedData.address,
       dailyLimit: validatedData.dailyLimit,
       status: validatedData.status,
-      user_id: user.id, // Enforced ownership
+      user_id: user.id, // Kept for audit trailing
+      organization_id: member.organization_id, // Enforces organizational ownership
       balance: 0,
-      spentToday: 0
+      spentToday: 0,
+      payments: 0
     });
 
 
