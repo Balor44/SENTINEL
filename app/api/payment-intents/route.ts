@@ -68,17 +68,15 @@ export async function POST(req: Request) {
     const recipient = String(body.recipient ?? "").trim();
 
 
-    // FIXED: fleet_frozen instead of fleetFrozen
     const { data: state, error: stateError } = await supabase.from("app_state").select("fleet_frozen").eq("user_id", user.id).single();
     if (stateError && stateError.code !== 'PGRST116') {
       console.warn("App State Error (Safe to ignore if app_state table is empty):", stateError.message);
     }
     
-    // Check for recent txs error
-    const { data: recentTxs, error: txError } = await supabase.from("transactions").select("*").eq("agent_id", agent.id).order("created_at", { ascending: false }).limit(20);
+    // 👇 FIXED: Query transactions using agentName instead of agent_id
+    const { data: recentTxs, error: txError } = await supabase.from("transactions").select("*").eq("agentName", agent.name).order("created_at", { ascending: false }).limit(20);
     if (txError) {
       console.error("Supabase GET Transactions Error:", txError.message);
-      // We don't crash here, we let it evaluate with an empty array so we can see the Insert error if one exists.
     }
 
 
@@ -97,7 +95,7 @@ export async function POST(req: Request) {
     if (decision.status === "blocked") {
       const { error: blockInsertError } = await supabase.from("transactions").insert({
         user_id: user.id,
-        agent_id: agent.id,
+        "agentName": agent.name, // 👇 FIXED: Use agentName
         amount,
         recipient,
         status: "blocked",
@@ -124,7 +122,7 @@ export async function POST(req: Request) {
         .from("transactions")
         .insert({
           user_id: user.id,
-          agent_id: agent.id,
+          "agentName": agent.name, // 👇 FIXED: Use agentName
           amount,
           recipient,
           status: "approval_required",
@@ -159,13 +157,13 @@ export async function POST(req: Request) {
       .from("transactions")
       .insert({
         user_id: user.id,
-        agent_id: agent.id,
+        "agentName": agent.name, // 👇 FIXED: Use agentName
         amount,
         recipient,
         status: "processing",
         idempotency_key: idempotencyKey,
         organization_id: agent.organization_id || agent.organizationId, 
-        type: "payment", // <-- If this is what is failing, the error will tell us!
+        type: "payment", 
         decision_reason: decision.reason,
         decision_trace: decision.trace, 
         event_hash: eventHash           
@@ -176,7 +174,6 @@ export async function POST(req: Request) {
 
     if (reserveError || !reservedTx) {
       console.error("RESERVATION INSERT ERROR:", reserveError?.message);
-      // Return the EXACT error to the frontend
       return NextResponse.json({ error: `Supabase Insert Failed: ${reserveError?.message}` }, { status: 500 });
     }
 
