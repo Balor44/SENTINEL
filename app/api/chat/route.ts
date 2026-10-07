@@ -30,7 +30,7 @@ export async function POST(req: Request) {
       getFleetStatus: (tool as any)({
         description: 'Get all agents, IDs, balances, and budgets.',
         parameters: z.object({}),
-        execute: async () => {
+        execute: async (): Promise<any> => {
           if (!user?.id) return { error: "Unauthorized" };
           const { data } = await supabase.from('agents').select('id, name, status, balance, daily_budget, spent_today').eq('user_id', user.id);
           return data || [];
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
           status: z.enum(['active', 'paused']).optional(),
           daily_budget: z.number().optional(),
         }),
-        execute: async ({ agent_id, status, daily_budget }: any) => {
+        execute: async ({ agent_id, status, daily_budget }: any): Promise<any> => {
           if (!user?.id) return { error: "Unauthorized" };
           const updates: any = {};
           if (status !== undefined) updates.status = status;
@@ -58,9 +58,11 @@ export async function POST(req: Request) {
   });
 
 
-  return (result as any).toDataStreamResponse 
-    ? (result as any).toDataStreamResponse() 
-    : (result as any).toTextStreamResponse();
+  const res = result as any;
+  // 🔥 THE FIX: Properly routing the stream based on your specific package version
+  if (res.toDataStreamResponse) return res.toDataStreamResponse();
+  if (res.toAIStreamResponse) return res.toAIStreamResponse();
+  return res.toTextStreamResponse();
 }
 
 
