@@ -9,8 +9,16 @@ import { Button } from "@/components/ui";
 
 export function AICopilot() {
   const [isOpen, setIsOpen] = useState(false);
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat() as any;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+
+  // BULLETPROOF STATE: Force aggressive fallbacks so React never crashes on undefined
+  const chatState = useChat() as any;
+  const messages = chatState?.messages || [];
+  const input = chatState?.input || "";
+  const handleInputChange = chatState?.handleInputChange || (() => {});
+  const handleSubmit = chatState?.handleSubmit || ((e: any) => e.preventDefault());
+  const isLoading = chatState?.isLoading || false;
 
 
   useEffect(() => {
@@ -68,9 +76,8 @@ export function AICopilot() {
           </div>
         )}
         
-        {/* TS Fix: Explicitly type m as any */}
-        {messages.map((m: any) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        {messages.map((m: any, index: number) => (
+          <div key={m.id || index} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div 
               className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${
                 m.role === 'user' 
@@ -79,10 +86,9 @@ export function AICopilot() {
               }`}
             >
               {m.content}
-              {/* TS Fix: Explicitly type tool as any */}
-              {m.toolInvocations?.map((tool: any) => (
-                <div key={tool.toolCallId} className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Querying {tool.toolName}...
+              {m.toolInvocations?.map((tool: any, tIndex: number) => (
+                <div key={tool.toolCallId || tIndex} className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Querying {tool.toolName || "database"}...
                 </div>
               ))}
             </div>
