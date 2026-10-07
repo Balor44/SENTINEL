@@ -26,7 +26,7 @@ export async function POST(req: Request) {
 
     // 🔥 SPLIT ARCHITECTURE: Generate text on server, handle tools natively, return JSON.
     const result = await (generateText as any)({
-      model: groq('llama-3.3-70b-versatile'),
+      model: groq('openai/gpt-oss-20b'),
       messages,
       maxSteps: 5, // Server handles the tool loop internally
       system: "You are Sentinel Copilot, an elite AI financial commander. You regulate autonomous agents. Use your tools to fetch data and update policies. Be concise and authoritative.",
