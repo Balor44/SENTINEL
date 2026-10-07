@@ -98,7 +98,7 @@ export async function POST(req: Request) {
 
   } catch (error: any) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Invalid data format", details: error.errors }, { status: 400 });
+      return NextResponse.json({ error: "Invalid data format", details: (error as any).errors }, { status: 400 });
     }
     return NextResponse.json({ error: error.message || "Failed to create policy" }, { status: 500 });
   }

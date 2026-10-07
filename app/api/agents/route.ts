@@ -129,7 +129,7 @@ export async function POST(req: Request) {
   } catch (error: any) {
     // Catch Zod validation errors and return them cleanly
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Invalid data format", details: error.errors }, { status: 400 });
+      return NextResponse.json({ error: "Invalid data format", details: (error as any).errors }, { status: 400 });
     }
     return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
   }
