@@ -4,7 +4,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@ai-sdk/react";
-import { Bot, X, MessageSquare, Send, Loader2 } from "lucide-react";
+import { Bot, X, MessageSquare, Send, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui";
 
 
@@ -14,17 +14,12 @@ export function AICopilot() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
 
-  // 🛡️ TITANIUM SHIELD: We catch every possible undefined glitch from the SDK
-  const chatState = useChat({
+  // 🔥 UNMUZZLED: Using the pure hook. If this fails, the error variable will catch it.
+  const { messages, append, isLoading, error } = useChat({
     api: '/api/chat',
     maxSteps: 5,
-  }) || {};
-
-
-  // Force strict arrays and booleans so React never panics
-  const messages = Array.isArray(chatState.messages) ? chatState.messages : [];
-  const isLoading = Boolean(chatState.isLoading);
-  const append = chatState.append || (() => Promise.resolve());
+    onError: (err) => console.error("AI Error:", err)
+  });
 
 
   useEffect(() => {
@@ -34,14 +29,16 @@ export function AICopilot() {
   }, [messages, isOpen]);
 
 
-  // 🛡️ NATIVE INPUT: We manage the typing ourselves to prevent read-only freezes
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!localInput.trim()) return;
 
 
-    append({ role: "user", content: localInput });
-    setLocalInput(""); 
+    const message = localInput;
+    setLocalInput(""); // Clear UI instantly
+    
+    // Send to the API
+    await append({ role: "user", content: message });
   };
 
 
@@ -82,7 +79,7 @@ export function AICopilot() {
 
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 && (
+        {messages.length === 0 && !error && (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
             <Bot className="mb-3 h-10 w-10 opacity-20" />
             <p className="font-medium text-white">I am linked to your Sentinel ledger.</p>
@@ -90,7 +87,6 @@ export function AICopilot() {
             <ul className="mt-2 space-y-1 text-xs italic">
               <li>"What agents do I have active?"</li>
               <li>"Pause the Marketing agent."</li>
-              <li>"Reduce the Support agent budget to 10."</li>
             </ul>
           </div>
         )}
@@ -105,7 +101,6 @@ export function AICopilot() {
               }`}
             >
               {m.content}
-              {/* Safe check for tools */}
               {Array.isArray(m.toolInvocations) && m.toolInvocations.map((tool: any, tIdx: number) => (
                 <div key={tool.toolCallId || tIdx} className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono">
                   <Loader2 className="h-3 w-3 animate-spin" /> Executing {tool.toolName || 'tool'}...
@@ -119,6 +114,18 @@ export function AICopilot() {
            <div className="flex justify-start">
              <div className="bg-white/5 text-gray-400 rounded-xl rounded-bl-sm px-4 py-3 text-sm flex items-center gap-2">
                <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> Analyzing...
+             </div>
+           </div>
+        )}
+
+
+        {/* 🔥 LIVE ERROR MONITOR 🔥 */}
+        {error && (
+          <div className="flex justify-start">
+             <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl rounded-bl-sm px-4 py-3 text-xs flex flex-col gap-1">
+               <div className="flex items-center gap-2 font-bold"><AlertCircle className="h-4 w-4" /> API Error</div>
+               <div>{error.message || "Failed to connect to AI server."}</div>
+               <div className="text-[10px] text-red-500 mt-1">Check Vercel logs or GROQ_API_KEY.</div>
              </div>
            </div>
         )}
