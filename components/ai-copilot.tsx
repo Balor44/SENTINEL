@@ -1,51 +1,40 @@
 // @ts-nocheck
 "use client";
 
-
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@ai-sdk/react";
-import { Bot, X, MessageSquare, Send, Loader2, AlertCircle } from "lucide-react";
+import { DefaultChatTransport } from "ai";
+import { Bot, X, MessageSquare, Send, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui";
-
 
 export function AICopilot() {
   const [isOpen, setIsOpen] = useState(false);
-  // Restoring the native state so your typing NEVER freezes.
   const [localInput, setLocalInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-
-  const chat = useChat({
-    api: '/api/chat',
-    maxSteps: 5,
+  const { messages, sendMessage, status, error } = useChat({
+    transport: new DefaultChatTransport({ api: "/api/chat" }),
   });
 
-
-  const messages = chat?.messages || [];
-  const isLoading = chat?.isLoading || false;
-  const error = chat?.error || null;
-
+  const isLoading = status === "submitted" || status === "streaming";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isOpen]);
 
-
-  // Using native form submission mapped to the SDK's append function
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!localInput.trim() || isLoading) return;
 
-
     const msg = localInput;
-    setLocalInput(""); // Clear instantly so you aren't blocked
+    setLocalInput("");
 
-
-    if (chat?.append) {
-      await chat.append({ role: "user", content: msg });
+    try {
+      await sendMessage({ text: msg });
+    } catch (err) {
+      console.error("Chat send failed:", err);
     }
   };
-
 
   if (!isOpen) {
     return (
@@ -57,7 +46,6 @@ export function AICopilot() {
       </button>
     );
   }
-
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex h-[550px] w-[350px] flex-col overflow-hidden rounded-2xl border border-border bg-black/95 shadow-2xl backdrop-blur-xl sm:w-[400px]">
@@ -82,7 +70,6 @@ export function AICopilot() {
         </Button>
       </div>
 
-
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && !error && (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
@@ -95,46 +82,67 @@ export function AICopilot() {
             </ul>
           </div>
         )}
-        
+
         {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div 
+          <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div
               className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${
-                m.role === 'user' 
-                  ? 'bg-emerald-600 text-white rounded-br-sm' 
-                  : 'bg-white/10 text-gray-200 rounded-bl-sm border border-white/5'
+                m.role === "user"
+                  ? "bg-emerald-600 text-white rounded-br-sm"
+                  : "bg-white/10 text-gray-200 rounded-bl-sm border border-white/5"
               }`}
             >
-              {m.content}
-              {m.toolInvocations?.map((tool) => (
-                <div key={tool.toolCallId} className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Executing {tool.toolName}...
-                </div>
-              ))}
+              {(m.parts || []).map((p, i) => {
+                if (p.type === "text") {
+                  return (
+                    <span key={i} className="whitespace-pre-wrap">
+                      {p.text}
+                    </span>
+                  );
+                }
+                if (typeof p.type === "string" && p.type.startsWith("tool-")) {
+                  const toolName = p.type.replace("tool-", "");
+                  const done = p.state === "output-available";
+                  return (
+                    <div
+                      key={i}
+                      className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono"
+                    >
+                      {done ? (
+                        <CheckCircle2 className="h-3 w-3" />
+                      ) : (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      )}
+                      {done ? `Completed ${toolName}` : `Executing ${toolName}...`}
+                    </div>
+                  );
+                }
+                return null;
+              })}
             </div>
           </div>
         ))}
-        
-        {isLoading && messages[messages.length - 1]?.role === "user" && (
-           <div className="flex justify-start">
-             <div className="bg-white/5 text-gray-400 rounded-xl rounded-bl-sm px-4 py-3 text-sm flex items-center gap-2">
-               <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> Analyzing...
-             </div>
-           </div>
-        )}
 
+        {isLoading && messages[messages.length - 1]?.role === "user" && (
+          <div className="flex justify-start">
+            <div className="bg-white/5 text-gray-400 rounded-xl rounded-bl-sm px-4 py-3 text-sm flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> Analyzing...
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="flex justify-start">
-             <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl rounded-bl-sm px-4 py-3 text-xs flex flex-col gap-1">
-               <div className="flex items-center gap-2 font-bold"><AlertCircle className="h-4 w-4" /> Connection Error</div>
-               <div>{error.message}</div>
-             </div>
-           </div>
+            <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl rounded-bl-sm px-4 py-3 text-xs flex flex-col gap-1">
+              <div className="flex items-center gap-2 font-bold">
+                <AlertCircle className="h-4 w-4" /> Connection Error
+              </div>
+              <div>{error.message}</div>
+            </div>
+          </div>
         )}
         <div ref={messagesEndRef} />
       </div>
-
 
       <form onSubmit={handleSend} className="border-t border-border/50 bg-black/80 p-3">
         <div className="relative flex items-center">
@@ -144,8 +152,8 @@ export function AICopilot() {
             placeholder="Command your fleet..."
             className="w-full rounded-xl border border-border bg-white/5 py-3 pl-4 pr-12 text-sm text-white placeholder:text-muted-foreground focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
           />
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             disabled={isLoading || !localInput.trim()}
             className="absolute right-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           >
@@ -156,5 +164,3 @@ export function AICopilot() {
     </div>
   );
 }
-
-
