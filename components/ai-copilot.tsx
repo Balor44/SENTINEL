@@ -10,19 +10,39 @@ import { Button } from "@/components/ui";
 
 export function AICopilot() {
   const [isOpen, setIsOpen] = useState(false);
+  const [localInput, setLocalInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
 
-  // 🔥 We use the pure useChat hook with maxSteps so the AI can reply after using tools
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
+  // 🛡️ TITANIUM SHIELD: We catch every possible undefined glitch from the SDK
+  const chatState = useChat({
     api: '/api/chat',
-    maxSteps: 5, 
-  });
+    maxSteps: 5,
+  }) || {};
+
+
+  // Force strict arrays and booleans so React never panics
+  const messages = Array.isArray(chatState.messages) ? chatState.messages : [];
+  const isLoading = Boolean(chatState.isLoading);
+  const append = chatState.append || (() => Promise.resolve());
 
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (isOpen) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, isOpen]);
+
+
+  // 🛡️ NATIVE INPUT: We manage the typing ourselves to prevent read-only freezes
+  const handleSend = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!localInput.trim()) return;
+
+
+    append({ role: "user", content: localInput });
+    setLocalInput(""); 
+  };
 
 
   if (!isOpen) {
@@ -75,8 +95,8 @@ export function AICopilot() {
           </div>
         )}
         
-        {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        {messages.map((m: any, idx: number) => (
+          <div key={m.id || idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div 
               className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${
                 m.role === 'user' 
@@ -85,15 +105,17 @@ export function AICopilot() {
               }`}
             >
               {m.content}
-              {m.toolInvocations?.map((tool) => (
-                <div key={tool.toolCallId} className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Querying {tool.toolName}...
+              {/* Safe check for tools */}
+              {Array.isArray(m.toolInvocations) && m.toolInvocations.map((tool: any, tIdx: number) => (
+                <div key={tool.toolCallId || tIdx} className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Executing {tool.toolName || 'tool'}...
                 </div>
               ))}
             </div>
           </div>
         ))}
-        {isLoading && messages[messages.length - 1]?.role === "user" && (
+        
+        {isLoading && (messages.length === 0 || messages[messages.length - 1]?.role === "user") && (
            <div className="flex justify-start">
              <div className="bg-white/5 text-gray-400 rounded-xl rounded-bl-sm px-4 py-3 text-sm flex items-center gap-2">
                <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> Analyzing...
@@ -104,17 +126,17 @@ export function AICopilot() {
       </div>
 
 
-      <form onSubmit={handleSubmit} className="border-t border-border/50 bg-black/80 p-3">
+      <form onSubmit={handleSend} className="border-t border-border/50 bg-black/80 p-3">
         <div className="relative flex items-center">
           <input
-            value={input}
-            onChange={handleInputChange}
+            value={localInput}
+            onChange={(e) => setLocalInput(e.target.value)}
             placeholder="Command your fleet..."
             className="w-full rounded-xl border border-border bg-white/5 py-3 pl-4 pr-12 text-sm text-white placeholder:text-muted-foreground focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
           />
           <button 
             type="submit" 
-            disabled={isLoading || !input.trim()}
+            disabled={isLoading || !localInput.trim()}
             className="absolute right-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           >
             <Send className="h-4 w-4" />
