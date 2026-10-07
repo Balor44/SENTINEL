@@ -1,182 +1,300 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
-import Link from "next/link";
-import { Activity, Bot, Plus, ShieldAlert, WalletCards } from "lucide-react";
-import { money } from "@/lib/utils";
-import { Badge, Button, StatCard } from "@/components/ui";
-import { PageHeader } from "@/components/page-header";
-import { TransactionTable } from "@/components/transaction-table";
-import { KillSwitch } from "@/components/kill-switch";
+"use client";
 
 
-export const dynamic = "force-dynamic";
+import { useState, useEffect } from "react";
+import { useConnect, useDisconnect, useAccount } from "wagmi";
+import { generatePrivateKey, privateKeyToAccount, mnemonicToAccount } from "viem/accounts";
+import { Button } from "@/components/ui";
+import { QrCode, Shield, Wallet, Lock, Key, Loader2, Trash2 } from "lucide-react";
+import { SecureVault } from "@/lib/secure-vault";
 
 
-export default async function OverviewPage() {
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
+type WalletMode = "created" | "imported" | "connected" | "";
 
 
-  const { data: { user } } = await supabase.auth.getUser();
+export function WalletConnection({ onWalletReady, compact }: { onWalletReady?: (address: string, mode: WalletMode) => void, compact?: boolean }) {
+  const { connect, connectors } = useConnect();
+  const { disconnect } = useDisconnect();
+  const { isConnected, address } = useAccount();
 
 
-  // MULTI-TENANCY: Get user's org and role
-  const { data: member } = await supabase
-    .from("organization_members")
-    .select("organization_id, role")
-    .eq("user_id", user?.id)
-    .single();
+  // Core State
+  const [activeTab, setActiveTab] = useState<"connect" | "create" | "import" | "unlock">("connect");
+  const [localAccount, setLocalAccount] = useState<any>(null); // Functional wallet in memory
+  const [hasEncryptedWallet, setHasEncryptedWallet] = useState(false);
+  
+  // Form State
+  const [password, setPassword] = useState("");
+  const [importKey, setImportKey] = useState("");
+  const [error, setError] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Display State (Shown only once upon creation)
+  const [newWalletData, setNewWalletData] = useState<{ pk: string, address: string } | null>(null);
 
 
-  const orgId = member?.organization_id;
-  const canEdit = member?.role === "owner" || member?.role === "admin";
+  // Check localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("sentinel_encrypted_wallet");
+    if (saved) {
+      setHasEncryptedWallet(true);
+      setActiveTab("unlock");
+    }
+  }, []);
 
 
-  // FIX: Use snake_case for created_at to ensure transactions load
-  const [
-    { data: state },
-    { data: agents },
-    { data: transactions }
-  ] = await Promise.all([
-    supabase.from("app_state").select("treasury, walletAddress, fleetFrozen").eq("organization_id", orgId).single(),
-    supabase.from("agents").select("*").eq("organization_id", orgId),
-    supabase.from("transactions").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }) 
-  ]);
+  // STATE 1: UNLOCK WALLET
+  const handleUnlock = async () => {
+    setIsProcessing(true);
+    setError("");
+    try {
+      const encryptedData = localStorage.getItem("sentinel_encrypted_wallet");
+      if (!encryptedData) throw new Error("No wallet found");
+      
+      const decryptedString = await SecureVault.decrypt(encryptedData, password);
+      const parsed = JSON.parse(decryptedString);
+      
+      setLocalAccount(parsed);
+      setPassword("");
+      if (onWalletReady) onWalletReady(parsed.address, parsed.isSeed ? "imported" : "created");
+    } catch (e) {
+      setError("Incorrect password or corrupted wallet data.");
+    }
+    setIsProcessing(false);
+  };
 
 
-  const safeAgents = agents || [];
-  const safeTransactions = transactions || [];
-  const treasury = state?.treasury || {};
-  const isFrozen = state?.fleetFrozen || false;
- 
-  const balance = treasury.balance || 0;
-  const allocated = treasury.allocated || 0;
- 
-  const blockedRisk = safeTransactions
-    .filter((tx: any) => tx.status === "blocked")
-    .reduce((sum: number, tx: any) => sum + Number(tx.amount || 0), 0);
+  // STATE 2: CREATE WALLET (With Encryption)
+  const handleCreateWallet = async () => {
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    setIsProcessing(true);
+    setError("");
+    try {
+      // 1. Generate Raw Key
+      const pk = generatePrivateKey();
+      const account = privateKeyToAccount(pk);
+      
+      const walletPayload = { address: account.address, privateKey: pk, isSeed: false };
+      
+      // 2. Encrypt & Save
+      const encrypted = await SecureVault.encrypt(JSON.stringify(walletPayload), password);
+      localStorage.setItem("sentinel_encrypted_wallet", encrypted);
+      
+      // 3. Set State & Show Backup Screen
+      setHasEncryptedWallet(true);
+      setLocalAccount(walletPayload);
+      setNewWalletData({ pk, address: account.address });
+      setPassword("");
+      if (onWalletReady) onWalletReady(account.address, "created");
+    } catch (e) {
+      setError("Failed to generate and encrypt wallet.");
+    }
+    setIsProcessing(false);
+  };
+
+
+  // STATE 3: IMPORT WALLET (With Encryption)
+  const handleImportWallet = async () => {
+    if (!password || password.length < 6) {
+      setError("Please set a password (min 6 characters) to encrypt this key.");
+      return;
+    }
+    setIsProcessing(true);
+    setError("");
+    try {
+      const input = importKey.trim();
+      let account;
+      let pkToSave = "";
+      let isSeed = false;
+
+
+      if (input.includes(" ")) {
+         account = mnemonicToAccount(input);
+         pkToSave = input; // Save the raw mnemonic string securely
+         isSeed = true;
+      } else {
+         const formattedKey = input.startsWith("0x") ? input : `0x${input}`;
+         account = privateKeyToAccount(formattedKey as `0x${string}`);
+         pkToSave = formattedKey;
+      }
+
+
+      const walletPayload = { address: account.address, privateKey: pkToSave, isSeed };
+      
+      // Encrypt & Save
+      const encrypted = await SecureVault.encrypt(JSON.stringify(walletPayload), password);
+      localStorage.setItem("sentinel_encrypted_wallet", encrypted);
+      
+      setHasEncryptedWallet(true);
+      setLocalAccount(walletPayload);
+      setPassword("");
+      setImportKey("");
+      if (onWalletReady) onWalletReady(account.address, "imported");
+    } catch (e) {
+      setError("Invalid Private Key / Phrase format.");
+    }
+    setIsProcessing(false);
+  };
+
+
+  const clearLocalWallet = () => {
+    if(confirm("This will permanently remove the encrypted wallet from this browser. Continue?")) {
+      localStorage.removeItem("sentinel_encrypted_wallet");
+      setLocalAccount(null);
+      setHasEncryptedWallet(false);
+      setActiveTab("connect");
+      if (onWalletReady) onWalletReady("", "");
+    }
+  };
+
+
+  const handleDisconnect = () => {
+    disconnect();
+    setLocalAccount(null);
+    setNewWalletData(null);
+    if (hasEncryptedWallet) setActiveTab("unlock");
+    if (onWalletReady) onWalletReady("", "");
+  };
+
+
+  // ACTIVE / CONNECTED UI
+  if (isConnected || localAccount) {
+    if (newWalletData) {
+      return (
+        <div className="mt-4 overflow-hidden rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+           <div className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
+             <Shield className="h-4 w-4" /> Wallet Secured & Encrypted
+           </div>
+           <div className="mt-4 text-xs text-muted-foreground uppercase tracking-wider">Your Private Key (Save this offline now!)</div>
+           <div className="mt-1 text-xs text-white font-mono break-all bg-black/40 p-3 rounded border border-border/50 select-all">
+             {newWalletData.pk}
+           </div>
+           <Button variant="primary" className="mt-4 w-full" onClick={() => setNewWalletData(null)}>
+             I have safely stored my key
+           </Button>
+        </div>
+      );
+    }
+
+
+    const activeAddress = localAccount?.address || address;
+    const mode = localAccount ? (localAccount.isSeed ? "Imported Phrase" : "Sentinel Encrypted") : "Web3 Connected";
+
+
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-border bg-white/[0.02] p-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+          <Shield className="h-4 w-4" />
+        </div>
+        <div className="flex-1">
+          <div className="text-xs text-muted-foreground">{mode} Wallet</div>
+          <div className="font-mono text-sm text-white">{activeAddress?.slice(0, 6)}...{activeAddress?.slice(-4)}</div>
+        </div>
+        <Button variant="ghost" className="h-8 px-2 text-xs" onClick={handleDisconnect}>Lock / Disconnect</Button>
+      </div>
+    );
+  }
+
+
+  if (compact) return null;
 
 
   return (
-    <div>
-      {/* Banner if fleet is frozen */}
-      {isFrozen && (
-        <div className="mb-6 flex items-center justify-center gap-2 rounded-lg border border-red-500/50 bg-red-500/10 p-3 text-sm font-medium text-red-400">
-          <ShieldAlert className="h-4 w-4" />
-          FLEET LOCKDOWN ACTIVE: All autonomous agent payments are currently suspended.
-        </div>
-      )}
-
-
-      <PageHeader
-        eyebrow="Workspace / Overview"
-        title="Good morning, operator."
-        description="Monitor how your autonomous agents use company funds."
-        action={
-          <div className="flex items-center gap-3">
-            <KillSwitch isFrozen={isFrozen} canEdit={canEdit} />
-            <Link href="/agents/new">
-              <Button variant="primary">
-                <Plus className="h-4 w-4" />
-                Create agent
-              </Button>
-            </Link>
-          </div>
-        }
-      />
-
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard
-          label="Treasury"
-          value={money(balance)}
-          detail={state?.walletAddress ? "Live Tempo balance" : "No treasury wallet connected"}
-          icon={<WalletCards className="h-4 w-4" />}
-        />
-        <StatCard
-          label="Agent spend"
-          value={money(allocated)}
-          detail={safeAgents.length === 0 ? "No agents funded" : `${safeAgents.length} agent${safeAgents.length === 1 ? "" : "s"}`}
-          icon={<Bot className="h-4 w-4" />}
-        />
-        <StatCard
-          label="Blocked risk"
-          value={money(blockedRisk)}
-          detail={safeTransactions.length === 0 ? "No blocked activity" : "Policy-blocked activity"}
-          icon={<ShieldAlert className="h-4 w-4" />}
-        />
+    <div className="mt-4 overflow-hidden rounded-xl border border-border bg-black/20">
+      <div className="flex border-b border-border/50 text-sm">
+        {hasEncryptedWallet && (
+           <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "unlock" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("unlock")}>Unlock Wallet</button>
+        )}
+        <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "connect" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("connect")}>Connect Web3</button>
+        <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "create" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("create")}>Create Wallet</button>
+        <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "import" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("import")}>Import Key</button>
       </div>
 
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <section className="panel p-5">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="eyebrow">Agent activity</div>
-              <div className="mt-2 text-xl font-semibold text-white">{safeTransactions.length}</div>
-              <div className="mt-1 text-xs text-muted-foreground">Recorded transactions</div>
+      <div className="p-5">
+        
+        {/* UNLOCK STATE */}
+        {activeTab === "unlock" && hasEncryptedWallet && (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2 text-sm text-white"><Lock className="h-4 w-4 text-emerald-400"/> Local Wallet Detected</div>
+            <div className="text-xs text-muted-foreground">Enter your Sentinel password to decrypt your self-custody wallet for this session.</div>
+            <input 
+              type="password" placeholder="Enter password" 
+              className="input w-full"
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+            />
+            {error && <div className="text-xs text-red-400">{error}</div>}
+            <div className="flex gap-2">
+              <Button variant="primary" className="flex-1" onClick={handleUnlock} disabled={isProcessing || !password}>
+                {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Unlock Wallet"}
+              </Button>
+              <Button variant="ghost" onClick={clearLocalWallet}><Trash2 className="h-4 w-4 text-red-400" /></Button>
             </div>
-            <Badge tone={isFrozen ? "danger" : "purple"}>{isFrozen ? "Locked" : "Live"}</Badge>
           </div>
+        )}
 
 
-          <div className="mt-8 flex min-h-56 flex-col items-center justify-center text-center">
-            {safeTransactions.length === 0 ? (
-              <>
-                <Activity className="h-8 w-8 text-muted-foreground" />
-                <div className="mt-4 text-sm font-medium text-white">No payment activity yet</div>
-                <div className="mt-1 max-w-sm text-sm text-muted-foreground">
-                  Sentinel will show real agent payment activity here after your first policy decision.
-                </div>
-              </>
-            ) : (
-              <div className="w-full">
-                <div className="mb-4 text-left text-xs text-muted-foreground">Recent activity</div>
-                <TransactionTable limit={5} />
-              </div>
-            )}
+        {/* CONNECT WEB3 (WalletConnect) */}
+        {activeTab === "connect" && (
+          <div className="flex flex-col gap-3">
+            <div className="mb-2 text-xs text-muted-foreground">Connect an existing Web3 wallet via browser extension or WalletConnect QR code.</div>
+            {connectors.map((connector) => (
+              <Button key={connector.uid} variant="secondary" className="justify-start gap-3" onClick={() => connect({ connector })}>
+                {connector.name.includes("WalletConnect") ? <QrCode className="h-4 w-4" /> : <Wallet className="h-4 w-4" />}
+                {connector.name}
+              </Button>
+            ))}
           </div>
-        </section>
+        )}
 
 
-        <section className="panel p-5">
-          <div className="eyebrow">Fleet</div>
-          <div className="mt-2 text-xl font-semibold text-white">{safeAgents.length}</div>
-          <div className="mt-1 text-xs text-muted-foreground">Registered autonomous agents</div>
-
-
-          <div className="mt-6 space-y-3">
-            {safeAgents.length === 0 ? (
-              <div className="rounded-xl border border-border p-5 text-center">
-                <Bot className="mx-auto h-6 w-6 text-muted-foreground" />
-                <div className="mt-3 text-sm font-medium text-white">No agents yet</div>
-                <div className="mt-1 text-xs text-muted-foreground">Create your first agent to begin assigning financial authority.</div>
-                <Link href="/agents/new" className="mt-4 inline-flex">
-                  <Button variant="secondary">Create agent</Button>
-                </Link>
-              </div>
-            ) : (
-              safeAgents.map((agent: any) => (
-                <Link
-                  key={agent.id}
-                  href={`/agents/${agent.id}`}
-                  className="block rounded-xl border border-border p-4 transition hover:border-white/20"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-medium text-white">{agent.name}</div>
-                    <Badge tone={agent.status === "active" ? "success" : "warning"}>{agent.status}</Badge>
-                  </div>
-                  {/* FIX: Map spent_today safely */}
-                  <div className="mt-2 text-xs text-muted-foreground">Spent today {money(agent.spent_today || agent.spentToday || 0)}</div>
-                </Link>
-              ))
-            )}
+        {/* CREATE WALLET */}
+        {activeTab === "create" && (
+          <div className="flex flex-col gap-4">
+            <div className="text-xs text-muted-foreground">Generate a secure Sentinel self-custody wallet. It will be AES-GCM encrypted and stored locally in this browser.</div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-white flex items-center gap-2"><Key className="h-3 w-3"/> Create a Encryption Password</label>
+              <input 
+                type="password" placeholder="Minimum 6 characters" 
+                className="input w-full"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            {error && <div className="text-xs text-red-400">{error}</div>}
+            <Button variant="primary" onClick={handleCreateWallet} disabled={isProcessing || password.length < 6}>
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate & Encrypt Wallet"}
+            </Button>
           </div>
-        </section>
+        )}
+
+
+        {/* IMPORT WALLET */}
+        {activeTab === "import" && (
+          <div className="flex flex-col gap-4">
+            <div className="text-xs text-muted-foreground">Import an existing Seed Phrase (12/24 words) or Private Key.</div>
+            <textarea 
+              placeholder="Enter your Seed Phrase or 0x..." 
+              className="input font-mono text-sm min-h-[60px] resize-none"
+              value={importKey} onChange={(e) => setImportKey(e.target.value)}
+            />
+            <div className="space-y-2 mt-2">
+              <label className="text-xs font-medium text-white flex items-center gap-2"><Lock className="h-3 w-3"/> Set Encryption Password</label>
+              <input 
+                type="password" placeholder="Password to secure this key locally" 
+                className="input w-full"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            {error && <div className="text-xs font-medium text-red-400">{error}</div>}
+            <Button variant="primary" onClick={handleImportWallet} disabled={isProcessing || !importKey || password.length < 6}>
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Import & Encrypt Wallet"}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
