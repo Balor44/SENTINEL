@@ -9,21 +9,32 @@ import { Button } from "@/components/ui";
 
 export function AICopilot() {
   const [isOpen, setIsOpen] = useState(false);
+  // 🔥 BULLETPROOF FIX: We manage the typing state ourselves natively
+  const [localInput, setLocalInput] = useState(""); 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
 
-  // BULLETPROOF STATE: Force aggressive fallbacks so React never crashes on undefined
   const chatState = useChat() as any;
   const messages = chatState?.messages || [];
-  const input = chatState?.input || "";
-  const handleInputChange = chatState?.handleInputChange || (() => {});
-  const handleSubmit = chatState?.handleSubmit || ((e: any) => e.preventDefault());
   const isLoading = chatState?.isLoading || false;
 
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+
+  // 🔥 We manually inject the message to the AI SDK
+  const handleSend = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!localInput.trim()) return;
+
+
+    if (chatState?.append) {
+      chatState.append({ role: "user", content: localInput });
+    }
+    setLocalInput(""); // Clear the input field instantly
+  };
 
 
   if (!isOpen) {
@@ -105,17 +116,17 @@ export function AICopilot() {
       </div>
 
 
-      <form onSubmit={handleSubmit} className="border-t border-border/50 bg-black/80 p-3">
+      <form onSubmit={handleSend} className="border-t border-border/50 bg-black/80 p-3">
         <div className="relative flex items-center">
           <input
-            value={input}
-            onChange={handleInputChange}
+            value={localInput}
+            onChange={(e) => setLocalInput(e.target.value)}
             placeholder="Command your fleet..."
             className="w-full rounded-xl border border-border bg-white/5 py-3 pl-4 pr-12 text-sm text-white placeholder:text-muted-foreground focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
           />
           <button 
             type="submit" 
-            disabled={isLoading || !input.trim()}
+            disabled={isLoading || !localInput.trim()}
             className="absolute right-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           >
             <Send className="h-4 w-4" />
