@@ -25,7 +25,7 @@ export default async function OverviewPage() {
   if (!user) return null;
 
 
-  // MULTI-TENANCY FIX: Get user's org and role safely
+  // 1. Get user's org safely
   const { data: member } = await supabase
     .from("organization_members")
     .select("organization_id, role")
@@ -37,10 +37,15 @@ export default async function OverviewPage() {
   const canEdit = member?.role === "owner" || member?.role === "admin";
 
 
-  // 🚨 FIX: Data mapping resilience
-  const queryFilter = orgId 
-    ? `organization_id.eq.${orgId},user_id.eq.${user.id}`
-    : `user_id.eq.${user.id}`;
+  // 2. Safe Queries - avoid .or() and .order() to prevent silent Supabase crashes
+  const agentsQuery = orgId 
+    ? supabase.from("agents").select("*").eq("organization_id", orgId)
+    : supabase.from("agents").select("*").eq("user_id", user.id);
+
+
+  const txQuery = orgId 
+    ? supabase.from("transactions").select("*").eq("organization_id", orgId)
+    : supabase.from("transactions").select("*").eq("user_id", user.id);
 
 
   const [
@@ -48,20 +53,26 @@ export default async function OverviewPage() {
     { data: agents },
     { data: transactions }
   ] = await Promise.all([
-    supabase.from("app_state").select("treasury, walletAddress, fleet_frozen, fleetFrozen").eq("user_id", user.id).single(),
-    supabase.from("agents").select("*").or(queryFilter),
-    supabase.from("transactions").select("*").or(queryFilter).order("created_at", { ascending: false }) 
+    supabase.from("app_state").select("*").eq("user_id", user.id).single(),
+    agentsQuery,
+    txQuery 
   ]);
 
 
   const safeAgents = agents || [];
-  const safeTransactions = transactions || [];
-  const treasury = state?.treasury || {};
+  
+  // 3. Sort in JavaScript to absolutely guarantee it won't crash on column naming
+  const safeTransactions = (transactions || []).sort((a: any, b: any) => {
+    const timeA = new Date(a.created_at || a.createdAt || 0).getTime();
+    const timeB = new Date(b.created_at || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
   
   const isFrozen = state?.fleet_frozen || state?.fleetFrozen || false;
  
-  const balance = treasury.balance || 0;
-  const allocated = treasury.allocated || 0;
+  // 4. Calculate dynamically from the agents directly (bulletproof)
+  const allocated = safeAgents.reduce((sum: number, a: any) => sum + Number(a.spent_today || a.spentToday || 0), 0);
+  const balance = state?.treasury?.balance || safeAgents.reduce((sum: number, a: any) => sum + Number(a.balance || 0), 0);
  
   const blockedRisk = safeTransactions
     .filter((tx: any) => tx.status === "blocked")
@@ -100,7 +111,7 @@ export default async function OverviewPage() {
         <StatCard
           label="Treasury"
           value={money(balance)}
-          detail={state?.walletAddress ? "Live Tempo balance" : "No treasury wallet connected"}
+          detail={state?.walletAddress ? "Live Tempo balance" : "Total combined agent balances"}
           icon={<WalletCards className="h-4 w-4" />}
         />
         <StatCard
