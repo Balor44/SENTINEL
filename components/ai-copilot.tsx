@@ -1,48 +1,59 @@
-// @ts-nocheck
 "use client";
 
 
 import { useState, useRef, useEffect } from "react";
-import { useChat } from "@ai-sdk/react";
 import { Bot, X, MessageSquare, Send, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui";
 
 
 export function AICopilot() {
   const [isOpen, setIsOpen] = useState(false);
-  // 🔥 Native input state guarantees you can always type
-  const [localInput, setLocalInput] = useState("");
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-
-  const chatState = useChat({
-    api: '/api/chat',
-    maxSteps: 5,
-  }) as any;
-
-
-  // Safe variable extraction to prevent React crashes
-  const safeMessages = Array.isArray(chatState.messages) ? chatState.messages : [];
-  const isLoading = Boolean(chatState.isLoading);
-  const error = chatState.error;
-  const append = chatState.append;
 
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [safeMessages, isOpen]);
+  }, [messages, isOpen]);
 
 
+  // 🔥 SPLIT ARCHITECTURE: Pure, native fetch. No buggy hooks.
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!localInput.trim()) return;
+    if (!input.trim() || isLoading) return;
 
 
-    const msg = localInput;
-    setLocalInput(""); // Instantly clear the box so you can keep typing
+    const userMsg = { id: Date.now().toString(), role: "user", content: input };
+    const newMessages = [...messages, userMsg];
     
-    if (append) {
-      await append({ role: "user", content: msg });
+    setMessages(newMessages);
+    setInput(""); 
+    setIsLoading(true);
+    setError(null);
+
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: newMessages }),
+      });
+
+
+      const data = await res.json();
+
+
+      if (!res.ok) throw new Error(data.error || "Failed to reach AI Server.");
+
+
+      setMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), role: "assistant", content: data.content }]);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -84,7 +95,7 @@ export function AICopilot() {
 
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {safeMessages.length === 0 && !error && (
+        {messages.length === 0 && !error && (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
             <Bot className="mb-3 h-10 w-10 opacity-20" />
             <p className="font-medium text-white">I am linked to your Sentinel ledger.</p>
@@ -96,7 +107,7 @@ export function AICopilot() {
           </div>
         )}
         
-        {safeMessages.map((m: any) => (
+        {messages.map((m) => (
           <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div 
               className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${
@@ -106,19 +117,14 @@ export function AICopilot() {
               }`}
             >
               {m.content}
-              {Array.isArray(m.toolInvocations) && m.toolInvocations.map((tool: any) => (
-                <div key={tool.toolCallId} className="mt-3 flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded border border-emerald-500/20 font-mono">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Executing {tool.toolName}...
-                </div>
-              ))}
             </div>
           </div>
         ))}
         
-        {isLoading && safeMessages[safeMessages.length - 1]?.role === "user" && (
+        {isLoading && (
            <div className="flex justify-start">
              <div className="bg-white/5 text-gray-400 rounded-xl rounded-bl-sm px-4 py-3 text-sm flex items-center gap-2">
-               <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> Analyzing...
+               <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> Analyzing Fleet Data...
              </div>
            </div>
         )}
@@ -127,8 +133,8 @@ export function AICopilot() {
         {error && (
           <div className="flex justify-start">
              <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl rounded-bl-sm px-4 py-3 text-xs flex flex-col gap-1">
-               <div className="flex items-center gap-2 font-bold"><AlertCircle className="h-4 w-4" /> Connection Error</div>
-               <div>{error.message || "Failed to reach the AI server."}</div>
+               <div className="flex items-center gap-2 font-bold"><AlertCircle className="h-4 w-4" /> Error</div>
+               <div>{error}</div>
              </div>
            </div>
         )}
@@ -139,14 +145,14 @@ export function AICopilot() {
       <form onSubmit={handleSend} className="border-t border-border/50 bg-black/80 p-3">
         <div className="relative flex items-center">
           <input
-            value={localInput}
-            onChange={(e) => setLocalInput(e.target.value)}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
             placeholder="Command your fleet..."
             className="w-full rounded-xl border border-border bg-white/5 py-3 pl-4 pr-12 text-sm text-white placeholder:text-muted-foreground focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
           />
           <button 
             type="submit" 
-            disabled={isLoading || !localInput.trim()}
+            disabled={isLoading || !input.trim()}
             className="absolute right-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           >
             <Send className="h-4 w-4" />
