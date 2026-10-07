@@ -25,7 +25,6 @@ export default async function OverviewPage() {
   if (!user) return null;
 
 
-  // 1. Get user's org safely
   const { data: member } = await supabase
     .from("organization_members")
     .select("organization_id, role")
@@ -37,7 +36,6 @@ export default async function OverviewPage() {
   const canEdit = member?.role === "owner" || member?.role === "admin";
 
 
-  // 2. Safe Queries - avoid .or() and .order() to prevent silent Supabase crashes
   const agentsQuery = orgId 
     ? supabase.from("agents").select("*").eq("organization_id", orgId)
     : supabase.from("agents").select("*").eq("user_id", user.id);
@@ -61,7 +59,6 @@ export default async function OverviewPage() {
 
   const safeAgents = agents || [];
   
-  // 3. Sort in JavaScript to absolutely guarantee it won't crash on column naming
   const safeTransactions = (transactions || []).sort((a: any, b: any) => {
     const timeA = new Date(a.created_at || a.createdAt || 0).getTime();
     const timeB = new Date(b.created_at || b.createdAt || 0).getTime();
@@ -70,8 +67,23 @@ export default async function OverviewPage() {
   
   const isFrozen = state?.fleet_frozen || state?.fleetFrozen || false;
  
-  // 4. Calculate dynamically from the agents directly (bulletproof)
-  const allocated = safeAgents.reduce((sum: number, a: any) => sum + Number(a.spent_today || a.spentToday || 0), 0);
+  // 🚨 BULLETPROOF AGENT SPEND: 
+  // Calculate directly from today's successful transactions rather than relying on the agent table
+  const todayStr = new Date().toDateString();
+  const todayLedgerSpend = safeTransactions
+    .filter((tx: any) => {
+       const isToday = new Date(tx.created_at || tx.createdAt || 0).toDateString() === todayStr;
+       const isSpent = ["settled", "processing", "approval_required", "approved"].includes(tx.status);
+       return isToday && isSpent;
+    })
+    .reduce((sum: number, tx: any) => sum + Number(tx.amount || 0), 0);
+
+
+  // Fallback to table fields just in case
+  const fallbackAgentSpend = safeAgents.reduce((sum: number, a: any) => sum + Number(a.spent_today || a.spentToday || a.todaySpend || a.dailySpent || 0), 0);
+  
+  // Use whichever is higher to guarantee it doesn't show $0 if money moved
+  const allocated = Math.max(todayLedgerSpend, fallbackAgentSpend);
   const balance = state?.treasury?.balance || safeAgents.reduce((sum: number, a: any) => sum + Number(a.balance || 0), 0);
  
   const blockedRisk = safeTransactions
@@ -115,9 +127,9 @@ export default async function OverviewPage() {
           icon={<WalletCards className="h-4 w-4" />}
         />
         <StatCard
-          label="Agent spend"
+          label="Agent spend (Today)"
           value={money(allocated)}
-          detail={safeAgents.length === 0 ? "No agents funded" : `${safeAgents.length} agent${safeAgents.length === 1 ? "" : "s"}`}
+          detail={safeAgents.length === 0 ? "No agents funded" : `${safeAgents.length} agent${safeAgents.length === 1 ? "" : "s"} active`}
           icon={<Bot className="h-4 w-4" />}
         />
         <StatCard
@@ -141,18 +153,21 @@ export default async function OverviewPage() {
           </div>
 
 
-          <div className="mt-8 flex min-h-56 flex-col items-center justify-center text-center">
+          <div className="mt-6 flex flex-col w-full">
             {safeTransactions.length === 0 ? (
-              <>
+              <div className="flex min-h-56 flex-col items-center justify-center text-center">
                 <Activity className="h-8 w-8 text-muted-foreground" />
                 <div className="mt-4 text-sm font-medium text-white">No payment activity yet</div>
                 <div className="mt-1 max-w-sm text-sm text-muted-foreground">
                   Sentinel will show real agent payment activity here after your first policy decision.
                 </div>
-              </>
+              </div>
             ) : (
               <div className="w-full">
-                <div className="mb-4 text-left text-xs text-muted-foreground">Recent activity</div>
+                {/* 🔥 NEW: Activity Bar Chart */}
+                <ActivityChart transactions={safeTransactions} />
+                
+                <div className="mt-8 mb-4 text-left text-xs text-muted-foreground">Recent transactions</div>
                 <TransactionTable limit={5} />
               </div>
             )}
@@ -187,13 +202,68 @@ export default async function OverviewPage() {
                     <div className="text-sm font-medium text-white">{agent.name}</div>
                     <Badge tone={agent.status === "active" ? "success" : "warning"}>{agent.status}</Badge>
                   </div>
-                  <div className="mt-2 text-xs text-muted-foreground">Spent today {money(agent.spent_today || agent.spentToday || 0)}</div>
+                  <div className="mt-2 text-xs text-muted-foreground">Spent today {money(agent.spent_today || agent.spentToday || agent.todaySpend || agent.dailySpent || 0)}</div>
                 </Link>
               ))
             )}
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+
+// 🔥 INLINE CHART COMPONENT: Beautiful Tailwind CSS Bar Chart
+function ActivityChart({ transactions }: { transactions: any[] }) {
+  // Generate last 7 days
+  const days = Array.from({ length: 7 }).map((_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+
+
+  // Map transactions to days
+  const data = days.map(day => {
+    const dayTxs = transactions.filter(tx => {
+      const txDate = new Date(tx.created_at || tx.createdAt || 0);
+      return txDate.getDate() === day.getDate() && 
+             txDate.getMonth() === day.getMonth() && 
+             txDate.getFullYear() === day.getFullYear() &&
+             tx.status !== "failed" && tx.status !== "blocked"; // Only count successful/pending spend
+    });
+    const total = dayTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    return { 
+      label: day.toLocaleDateString('en-US', { weekday: 'short' }), 
+      total 
+    };
+  });
+
+
+  const maxTotal = Math.max(...data.map(d => d.total), 1); // Prevent division by zero
+
+
+  return (
+    <div className="mt-4 flex h-40 w-full items-end justify-between gap-2 border-b border-border/50 pb-4">
+      {data.map((d, i) => (
+        <div key={i} className="group relative flex h-full w-full flex-col items-center justify-end">
+          <div 
+            className="w-full rounded-t-sm bg-purple-500/80 transition-all hover:bg-purple-400" 
+            style={{ 
+              height: `${(d.total / maxTotal) * 100}%`, 
+              minHeight: d.total > 0 ? '4px' : '0' 
+            }}
+          >
+            {/* Hover Tooltip */}
+            <div className="absolute -top-8 left-1/2 z-10 hidden -translate-x-1/2 whitespace-nowrap rounded bg-black px-2 py-1 text-xs text-white border border-border group-hover:block">
+              {money(d.total)}
+            </div>
+          </div>
+          <div className="mt-2 text-[10px] uppercase text-muted-foreground">{d.label}</div>
+        </div>
+      ))}
     </div>
   );
 }
