@@ -10,10 +10,11 @@ import { Button } from "@/components/ui";
 
 export function AICopilot() {
   const [isOpen, setIsOpen] = useState(false);
+  // Restoring the native state so your typing NEVER freezes.
+  const [localInput, setLocalInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
 
-  // The runtime is fixed. We extract safely to prevent any white screen.
   const chat = useChat({
     api: '/api/chat',
     maxSteps: 5,
@@ -21,9 +22,6 @@ export function AICopilot() {
 
 
   const messages = chat?.messages || [];
-  const input = chat?.input || "";
-  const handleInputChange = chat?.handleInputChange || (() => {});
-  const handleSubmit = chat?.handleSubmit || ((e) => e.preventDefault());
   const isLoading = chat?.isLoading || false;
   const error = chat?.error || null;
 
@@ -31,6 +29,22 @@ export function AICopilot() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isOpen]);
+
+
+  // Using native form submission mapped to the SDK's append function
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!localInput.trim() || isLoading) return;
+
+
+    const msg = localInput;
+    setLocalInput(""); // Clear instantly so you aren't blocked
+
+
+    if (chat?.append) {
+      await chat.append({ role: "user", content: msg });
+    }
+  };
 
 
   if (!isOpen) {
@@ -122,17 +136,17 @@ export function AICopilot() {
       </div>
 
 
-      <form onSubmit={handleSubmit} className="border-t border-border/50 bg-black/80 p-3">
+      <form onSubmit={handleSend} className="border-t border-border/50 bg-black/80 p-3">
         <div className="relative flex items-center">
           <input
-            value={input}
-            onChange={handleInputChange}
+            value={localInput}
+            onChange={(e) => setLocalInput(e.target.value)}
             placeholder="Command your fleet..."
             className="w-full rounded-xl border border-border bg-white/5 py-3 pl-4 pr-12 text-sm text-white placeholder:text-muted-foreground focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
           />
           <button 
             type="submit" 
-            disabled={isLoading || !input?.trim()}
+            disabled={isLoading || !localInput.trim()}
             className="absolute right-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           >
             <Send className="h-4 w-4" />
