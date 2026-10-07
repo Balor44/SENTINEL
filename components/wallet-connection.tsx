@@ -1,162 +1,301 @@
 "use client";
 
 
-import { useEffect, useState } from "react";
-import { Check, Copy, KeyRound, Loader2, Smartphone, WalletCards, X } from "lucide-react";
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
+import { useState, useEffect } from "react";
+import { useConnect, useDisconnect, useAccount } from "wagmi";
+import { generatePrivateKey, privateKeyToAccount, mnemonicToAccount } from "viem/accounts";
 import { Button } from "@/components/ui";
+import { QrCode, Shield, Wallet, Lock, Key, Loader2, Trash2 } from "lucide-react";
+import { SecureVault } from "@/lib/secure-vault";
 
 
-function shortAddress(address?: string) {
-  return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
-}
+type WalletMode = "created" | "imported" | "connected" | "";
 
 
-export function WalletConnection({ compact = false, onWalletReady }: { compact?: boolean; onWalletReady?: (address: string, mode: "created" | "imported" | "connected") => void }) {
-  const { address, isConnected, chain } = useAccount();
-  const { connect, connectors, isPending, error } = useConnect();
+export function WalletConnection({ onWalletReady, compact }: { onWalletReady?: (address: string, mode: WalletMode) => void, compact?: boolean }) {
+  const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"menu" | "create" | "import" | "connect">("menu");
-  const [privateKey, setPrivateKey] = useState("");
-  const [createdKey, setCreatedKey] = useState("");
-  const [walletError, setWalletError] = useState("");
+  const { isConnected, address } = useAccount();
 
 
-  const wc = connectors.find((c) => c.name.toLowerCase().includes("walletconnect"));
-  const injectedConnectors = connectors.filter((c) => !c.name.toLowerCase().includes("walletconnect"));
+  // Core State
+  const [activeTab, setActiveTab] = useState<"connect" | "create" | "import" | "unlock">("connect");
+  const [localAccount, setLocalAccount] = useState<any>(null); // Functional wallet in memory
+  const [hasEncryptedWallet, setHasEncryptedWallet] = useState(false);
+  
+  // Form State
+  const [password, setPassword] = useState("");
+  const [importKey, setImportKey] = useState("");
+  const [error, setError] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Display State (Shown only once upon creation)
+  const [newWalletData, setNewWalletData] = useState<{ pk: string, address: string } | null>(null);
 
 
-  // The database sync function
-  async function syncWalletToDatabase(walletAddress: string) {
-    try {
-      await fetch("/api/wallet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress }),
-      });
-    } catch (err) {
-      console.error("Failed to sync wallet to account:", err);
-    }
-  }
-
-
-  // 1. Trigger sync when an external wallet connects via Wagmi
+  // Check localStorage on mount
   useEffect(() => {
-    if (isConnected && address) {
-      setOpen(false);
-      syncWalletToDatabase(address);
-      onWalletReady?.(address, "connected");
+    const saved = localStorage.getItem("sentinel_encrypted_wallet");
+    if (saved) {
+      setHasEncryptedWallet(true);
+      setActiveTab("unlock");
     }
-  }, [isConnected, address, onWalletReady]);
+  }, []);
 
 
-  if (isConnected && address) {
-    return (
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/5 px-3 py-2 text-xs">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-          <span className="font-medium text-white">{shortAddress(address)}</span>
-          {!compact && <span className="text-muted-foreground">{chain?.name ?? "Wallet"}</span>}
+  // STATE 1: UNLOCK WALLET
+  const handleUnlock = async () => {
+    setIsProcessing(true);
+    setError("");
+    try {
+      const encryptedData = localStorage.getItem("sentinel_encrypted_wallet");
+      if (!encryptedData) throw new Error("No wallet found");
+      
+      const decryptedString = await SecureVault.decrypt(encryptedData, password);
+      const parsed = JSON.parse(decryptedString);
+      
+      setLocalAccount(parsed);
+      setPassword("");
+      if (onWalletReady) onWalletReady(parsed.address, parsed.isSeed ? "imported" : "created");
+    } catch (e) {
+      setError("Incorrect password or corrupted wallet data.");
+    }
+    setIsProcessing(false);
+  };
+
+
+  // STATE 2: CREATE WALLET (With Encryption)
+  const handleCreateWallet = async () => {
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    setIsProcessing(true);
+    setError("");
+    try {
+      // 1. Generate Raw Key
+      const pk = generatePrivateKey();
+      const account = privateKeyToAccount(pk);
+      
+      const walletPayload = { address: account.address, privateKey: pk, isSeed: false };
+      
+      // 2. Encrypt & Save
+      const encrypted = await SecureVault.encrypt(JSON.stringify(walletPayload), password);
+      localStorage.setItem("sentinel_encrypted_wallet", encrypted);
+      
+      // 3. Set State & Show Backup Screen
+      setHasEncryptedWallet(true);
+      setLocalAccount(walletPayload);
+      setNewWalletData({ pk, address: account.address });
+      setPassword("");
+      if (onWalletReady) onWalletReady(account.address, "created");
+    } catch (e) {
+      setError("Failed to generate and encrypt wallet.");
+    }
+    setIsProcessing(false);
+  };
+
+
+  // STATE 3: IMPORT WALLET (With Encryption)
+  const handleImportWallet = async () => {
+    if (!password || password.length < 6) {
+      setError("Please set a password (min 6 characters) to encrypt this key.");
+      return;
+    }
+    setIsProcessing(true);
+    setError("");
+    try {
+      const input = importKey.trim();
+      let account;
+      let pkToSave = "";
+      let isSeed = false;
+
+
+      if (input.includes(" ")) {
+         account = mnemonicToAccount(input);
+         pkToSave = input; // Save the raw mnemonic string securely
+         isSeed = true;
+      } else {
+         const formattedKey = input.startsWith("0x") ? input : `0x${input}`;
+         account = privateKeyToAccount(formattedKey as `0x${string}`);
+         pkToSave = formattedKey;
+      }
+
+
+      const walletPayload = { address: account.address, privateKey: pkToSave, isSeed };
+      
+      // Encrypt & Save
+      const encrypted = await SecureVault.encrypt(JSON.stringify(walletPayload), password);
+      localStorage.setItem("sentinel_encrypted_wallet", encrypted);
+      
+      setHasEncryptedWallet(true);
+      setLocalAccount(walletPayload);
+      setPassword("");
+      setImportKey("");
+      if (onWalletReady) onWalletReady(account.address, "imported");
+    } catch (e) {
+      setError("Invalid Private Key / Phrase format.");
+    }
+    setIsProcessing(false);
+  };
+
+
+  const clearLocalWallet = () => {
+    if(confirm("This will permanently remove the encrypted wallet from this browser. Continue?")) {
+      localStorage.removeItem("sentinel_encrypted_wallet");
+      setLocalAccount(null);
+      setHasEncryptedWallet(false);
+      setActiveTab("connect");
+      if (onWalletReady) onWalletReady("", "");
+    }
+  };
+
+
+  const handleDisconnect = () => {
+    disconnect();
+    setLocalAccount(null);
+    setNewWalletData(null);
+    if (hasEncryptedWallet) setActiveTab("unlock");
+    if (onWalletReady) onWalletReady("", "");
+  };
+
+
+  // ACTIVE / CONNECTED UI
+  if (isConnected || localAccount) {
+    if (newWalletData) {
+      return (
+        <div className="mt-4 overflow-hidden rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+           <div className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
+             <Shield className="h-4 w-4" /> Wallet Secured & Encrypted
+           </div>
+           <div className="mt-4 text-xs text-muted-foreground uppercase tracking-wider">Your Private Key (Save this offline now!)</div>
+           <div className="mt-1 text-xs text-white font-mono break-all bg-black/40 p-3 rounded border border-border/50 select-all">
+             {newWalletData.pk}
+           </div>
+           <Button variant="primary" className="mt-4 w-full" onClick={() => setNewWalletData(null)}>
+             I have safely stored my key
+           </Button>
         </div>
-        <Button variant="ghost" onClick={() => disconnect()} className="text-xs">Disconnect</Button>
+      );
+    }
+
+
+    const activeAddress = localAccount?.address || address;
+    const mode = localAccount ? (localAccount.isSeed ? "Imported Phrase" : "Sentinel Encrypted") : "Web3 Connected";
+
+
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-border bg-white/[0.02] p-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+          <Shield className="h-4 w-4" />
+        </div>
+        <div className="flex-1">
+          <div className="text-xs text-muted-foreground">{mode} Wallet</div>
+          <div className="font-mono text-sm text-white">{activeAddress?.slice(0, 6)}...{activeAddress?.slice(-4)}</div>
+        </div>
+        <Button variant="ghost" className="h-8 px-2 text-xs" onClick={handleDisconnect}>Lock / Disconnect</Button>
       </div>
     );
   }
 
 
-  // 2. Trigger sync when a fresh wallet is generated locally
-  function createWallet() {
-    setWalletError("");
-    const key = generatePrivateKey();
-    const account = privateKeyToAccount(key);
-    setCreatedKey(key);
-    syncWalletToDatabase(account.address);
-    onWalletReady?.(account.address, "created");
-  }
-
-
-  // 3. Trigger sync when an existing private key is imported
-  function importWallet() {
-    try {
-      setWalletError("");
-      const normalized = privateKey.trim() as `0x${string}`;
-      const account = privateKeyToAccount(normalized);
-      syncWalletToDatabase(account.address);
-      onWalletReady?.(account.address, "imported");
-    } catch {
-      setWalletError("That private key is invalid. It must be a 32-byte 0x-prefixed key.");
-    }
-  }
+  if (compact) return null;
 
 
   return (
-    <div className="relative">
-      <Button variant="primary" onClick={() => { setOpen((v) => !v); setMode("menu"); }} disabled={isPending}>
-        {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WalletCards className="mr-2 h-4 w-4" />}
-        {compact ? "Wallet" : "Set up treasury wallet"}
-      </Button>
-      {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[360px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-[#0b0b12] p-4 shadow-2xl">
-          <div className="mb-4 flex items-start justify-between">
-            <div>
-              <div className="text-sm font-semibold text-white">How do you want to manage the treasury?</div>
-              <div className="mt-1 text-xs text-muted-foreground">Sentinel supports self-custody and external wallets.</div>
+    <div className="mt-4 overflow-hidden rounded-xl border border-border bg-black/20">
+      <div className="flex border-b border-border/50 text-sm">
+        {hasEncryptedWallet && (
+           <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "unlock" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("unlock")}>Unlock Wallet</button>
+        )}
+        <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "connect" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("connect")}>Connect Web3</button>
+        <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "create" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("create")}>Create Wallet</button>
+        <button className={`flex-1 py-3 font-medium transition-colors ${activeTab === "import" ? "bg-white/5 text-white" : "text-muted-foreground hover:bg-white/5"}`} onClick={() => setActiveTab("import")}>Import Key</button>
+      </div>
+
+
+      <div className="p-5">
+        
+        {/* UNLOCK STATE */}
+        {activeTab === "unlock" && hasEncryptedWallet && (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2 text-sm text-white"><Lock className="h-4 w-4 text-emerald-400"/> Local Wallet Detected</div>
+            <div className="text-xs text-muted-foreground">Enter your Sentinel password to decrypt your self-custody wallet for this session.</div>
+            <input 
+              type="password" placeholder="Enter password" 
+              className="input w-full"
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+            />
+            {error && <div className="text-xs text-red-400">{error}</div>}
+            <div className="flex gap-2">
+              <Button variant="primary" className="flex-1" onClick={handleUnlock} disabled={isProcessing || !password}>
+                {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Unlock Wallet"}
+              </Button>
+              <Button variant="ghost" onClick={clearLocalWallet}><Trash2 className="h-4 w-4 text-red-400" /></Button>
             </div>
-            <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-white"><X className="h-4 w-4" /></button>
           </div>
+        )}
 
 
-          {mode === "menu" && (
+        {/* CONNECT WEB3 (WalletConnect) */}
+        {activeTab === "connect" && (
+          <div className="flex flex-col gap-3">
+            <div className="mb-2 text-xs text-muted-foreground">Connect an existing Web3 wallet via browser extension or WalletConnect QR code.</div>
+            {connectors.map((connector) => (
+              <Button key={connector.uid} variant="secondary" className="justify-start gap-3" onClick={() => connect({ connector })}>
+                {connector.name.includes("WalletConnect") ? <QrCode className="h-4 w-4" /> : <Wallet className="h-4 w-4" />}
+                {connector.name}
+              </Button>
+            ))}
+          </div>
+        )}
+
+
+        {/* CREATE WALLET */}
+        {activeTab === "create" && (
+          <div className="flex flex-col gap-4">
+            <div className="text-xs text-muted-foreground">Generate a secure Sentinel self-custody wallet. It will be AES-GCM encrypted and stored locally in this browser.</div>
             <div className="space-y-2">
-              <button onClick={() => { setMode("create"); createWallet(); }} className="flex w-full items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 p-3 text-left hover:bg-primary/15">
-                <WalletCards className="h-5 w-5 text-primary" />
-                <span><b className="block text-sm text-white">Create a Sentinel wallet</b><small className="text-xs text-muted-foreground">Generate a self-custody wallet in your browser.</small></span>
-              </button>
-              <button onClick={() => setMode("import")} className="flex w-full items-center gap-3 rounded-xl border border-border bg-white/[0.03] p-3 text-left hover:bg-white/[0.07]">
-                <KeyRound className="h-5 w-5 text-white" />
-                <span><b className="block text-sm text-white">Import existing wallet</b><small className="text-xs text-muted-foreground">Use a private key you already control.</small></span>
-              </button>
-              <button onClick={() => setMode("connect")} className="flex w-full items-center gap-3 rounded-xl border border-border bg-white/[0.03] p-3 text-left hover:bg-white/[0.07]">
-                <Smartphone className="h-5 w-5 text-white" />
-                <span><b className="block text-sm text-white">Connect external wallet</b><small className="text-xs text-muted-foreground">WalletConnect, MetaMask and other browser wallets.</small></span>
-              </button>
-              {!wc && <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-200">WalletConnect will appear as a selectable QR option after you add NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID to .env.local.</div>}
+              <label className="text-xs font-medium text-white flex items-center gap-2"><Key className="h-3 w-3"/> Create a Encryption Password</label>
+              <input 
+                type="password" placeholder="Minimum 6 characters" 
+                className="input w-full"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+              />
             </div>
-          )}
+            {error && <div className="text-xs text-red-400">{error}</div>}
+            <Button variant="primary" onClick={handleCreateWallet} disabled={isProcessing || password.length < 6}>
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Generate & Encrypt Wallet"}
+            </Button>
+          </div>
+        )}
 
 
-          {mode === "connect" && <div className="space-y-2">
-            <button onClick={() => setMode("menu")} className="mb-2 text-xs text-muted-foreground hover:text-white">← Back</button>
-            {injectedConnectors.map((connector) => <button key={connector.uid} onClick={() => connect({ connector })} className="flex w-full items-center justify-between rounded-xl border border-border bg-white/[0.03] px-3 py-3 text-left text-sm text-white hover:bg-white/[0.07]"><span>{connector.name}</span><span className="text-[10px] text-muted-foreground">Browser</span></button>)}
-            {wc && <button onClick={() => connect({ connector: wc })} className="flex w-full items-center justify-between rounded-xl border border-primary/30 bg-primary/10 px-3 py-3 text-left text-sm text-white hover:bg-primary/15"><span>WalletConnect</span><span className="text-[10px] text-muted-foreground">QR / mobile</span></button>}
-            {!wc && <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-200"><div className="font-medium text-amber-100">WalletConnect QR</div><div className="mt-1">Add a WalletConnect Cloud Project ID to enable QR/mobile pairing.</div></div>}
-          </div>}
-
-
-          {mode === "create" && <div className="space-y-3">
-            <button onClick={() => setMode("menu")} className="text-xs text-muted-foreground hover:text-white">← Back</button>
-            <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-100">Your private key is generated locally. Sentinel does not receive it. Save the backup before continuing.</div>
-            <div className="rounded-xl border border-border bg-black/20 p-3"><div className="text-[10px] uppercase tracking-wider text-muted-foreground">Private key backup</div><div className="mt-2 break-all font-mono text-[11px] text-white">{createdKey}</div></div>
-            <button onClick={() => navigator.clipboard?.writeText(createdKey)} className="flex w-full items-center justify-center gap-2 rounded-xl border border-border py-2 text-xs text-white hover:bg-white/[0.05]"><Copy className="h-3 w-3" /> Copy backup</button>
-            <div className="text-xs text-emerald-200">Wallet created. Address: {shortAddress(privateKeyToAccount(createdKey as `0x${string}`).address)}</div>
-          </div>}
-
-
-          {mode === "import" && <div className="space-y-3">
-            <button onClick={() => setMode("menu")} className="text-xs text-muted-foreground hover:text-white">← Back</button>
-            <div className="rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-xs text-red-200">Never paste a wallet key into a website you do not trust. For this demo, the key stays in browser memory and is not sent to Sentinel.</div>
-            <input className="input font-mono text-xs" type="password" placeholder="0x… private key" value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} />
-            {walletError && <div className="text-xs text-red-300">{walletError}</div>}
-            <Button variant="primary" className="w-full" onClick={importWallet}>Import wallet</Button>
-          </div>}
-
-
-          {error && <div className="mt-3 rounded-lg bg-red-400/10 p-2 text-xs text-red-300">{error.message}</div>}
-          <div className="mt-4 flex items-center gap-2 text-[10px] text-muted-foreground"><Check className="h-3 w-3" /> Sentinel never asks an external wallet for its private key.</div>
-        </div>
-      )}
+        {/* IMPORT WALLET */}
+        {activeTab === "import" && (
+          <div className="flex flex-col gap-4">
+            <div className="text-xs text-muted-foreground">Import an existing Seed Phrase (12/24 words) or Private Key.</div>
+            <textarea 
+              placeholder="Enter your Seed Phrase or 0x..." 
+              className="input font-mono text-sm min-h-[60px] resize-none"
+              value={importKey} onChange={(e) => setImportKey(e.target.value)}
+            />
+            <div className="space-y-2 mt-2">
+              <label className="text-xs font-medium text-white flex items-center gap-2"><Lock className="h-3 w-3"/> Set Encryption Password</label>
+              <input 
+                type="password" placeholder="Password to secure this key locally" 
+                className="input w-full"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            {error && <div className="text-xs font-medium text-red-400">{error}</div>}
+            <Button variant="primary" onClick={handleImportWallet} disabled={isProcessing || !importKey || password.length < 6}>
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Import & Encrypt Wallet"}
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

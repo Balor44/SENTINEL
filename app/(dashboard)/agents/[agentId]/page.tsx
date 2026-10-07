@@ -1,10 +1,9 @@
-// app/(dashboard)/agents/[agentid]/page.tsx
 "use client";
 
 
 import Link from "next/link";
-import { 
-  ArrowLeft, Bot, Copy, ShieldCheck, WalletCards, 
+import {
+  ArrowLeft, Bot, Copy, ShieldCheck, WalletCards,
   Loader2, Save, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, PauseCircle, PlayCircle
 } from "lucide-react";
 import { use, useState, useEffect } from "react";
@@ -17,18 +16,15 @@ import { useSendTransaction } from "wagmi";
 import { parseEther } from "viem";
 
 
-export default function AgentDetailPage({ params }: { params: Promise<{ agentid: string }> }) {
-  const { agentid } = use(params);
-  const agentId = agentid;
+export default function AgentDetailPage({ params }: { params: Promise<{ agentId?: string, agentid?: string }> }) {
+  const unwrappedParams = use(params);
+  const agentId = unwrappedParams.agentId || unwrappedParams.agentid;
  
   const [agent, setAgent] = useState<Agent | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  
-  // RBAC State
-  const [userRole, setUserRole] = useState<"owner" | "admin" | "operator" | "viewer">("admin"); 
  
-  // Form and Edit State
+  const [userRole, setUserRole] = useState<"owner" | "admin" | "operator" | "viewer">("admin");
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editBudget, setEditBudget] = useState("");
@@ -40,20 +36,27 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
 
 
   useEffect(() => {
+    if (!agentId) return;
     Promise.all([
       fetch(`/api/agents/${agentId}`, { cache: "no-store" }).then(res => res.json()),
       fetch("/api/transactions", { cache: "no-store" }).then(res => res.json())
     ]).then(([agentData, txData]) => {
       if (agentData.agent) {
         setAgent(agentData.agent);
-        setEditBudget(String(agentData.agent.dailyBudget));
-        setEditThreshold(String(agentData.agent.approvalThreshold));
-        setEditAllowlist((agentData.agent.recipientAllowlist || []).join(", "));
+        // Cast to any to bypass TS strict interface checks for snake_case db columns
+        const a = agentData.agent as any;
+        setEditBudget(String(a.dailyBudget || a.daily_budget || 0));
+        setEditThreshold(String(a.approvalThreshold || a.approval_threshold || 0));
         
+        const allowlist = a.recipientAllowlist || a.recipient_allowlist || a.recipients || [];
+        setEditAllowlist(allowlist.join(", "));
+       
         if (agentData.role) setUserRole(agentData.role);
       }
       if (txData.transactions) {
-        setTransactions(txData.transactions.filter((t: Transaction) => t.agentId === agentId));
+        setTransactions(txData.transactions.filter((t: any) => 
+          t.agentName === agentData.agent?.name || t.agent_id === agentData.agent?.id
+        ));
       }
       setIsLoading(false);
     }).catch(err => {
@@ -72,7 +75,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
         body: JSON.stringify({
           dailyBudget: Number(editBudget),
           approvalThreshold: Number(editThreshold),
-          recipientAllowlist: editAllowlist.split(",").map(s => s.trim()).filter(Boolean)
+          recipientAllowlist: editAllowlist.split(",").map((s: string) => s.trim()).filter(Boolean)
         })
       });
 
@@ -94,9 +97,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
   const handleToggleStatus = async () => {
     if (!agent) return;
     const newStatus = agent.status === "active" ? "paused" : "active";
-    
     setAgent({ ...agent, status: newStatus });
-    
     await fetch(`/api/agents/${agentId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -136,6 +137,9 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
 
 
   const canEdit = userRole === "owner" || userRole === "admin";
+  const agentAny = agent as any; // TS bypass for snake_case values
+  const dailyBudget = agentAny.dailyBudget || agentAny.daily_budget || 0;
+  const spentToday = agentAny.spentToday || agentAny.spent_today || 0;
 
 
   return (
@@ -172,8 +176,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
 
 
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Balance" value={money(agent.balance)} detail="Available to spend" icon={<WalletCards className="h-4 w-4" />} />
-        <StatCard label="Today’s spend" value={money(agent.spentToday ?? 0)} detail={`of ${money(agent.dailyBudget)} daily limit`} icon={<Bot className="h-4 w-4" />} />
+        <StatCard label="Balance" value={money(agent.balance || 0)} detail="Available to spend" icon={<WalletCards className="h-4 w-4" />} />
+        <StatCard label="Today’s spend" value={money(spentToday)} detail={`of ${money(dailyBudget)} daily limit`} icon={<Bot className="h-4 w-4" />} />
         <StatCard label="Payments" value={String(agent.payments ?? 0)} detail="Successful payments" icon={<ShieldCheck className="h-4 w-4" />} />
       </div>
 
@@ -194,9 +198,9 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
             <div>
               <div className="mb-2 flex justify-between text-sm">
                 <span className="text-muted-foreground">Daily budget tracking</span>
-                <span className="text-white">{money(agent.spentToday ?? 0)} / {money(agent.dailyBudget)}</span>
+                <span className="text-white">{money(spentToday)} / {money(dailyBudget)}</span>
               </div>
-              <ProgressBar value={((agent.spentToday ?? 0) / agent.dailyBudget) * 100} />
+              <ProgressBar value={dailyBudget > 0 ? (spentToday / dailyBudget) * 100 : 0} />
             </div>
 
 
@@ -231,8 +235,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
               </div>
             ) : (
               <>
-                <Rule label="Max transaction" value={money(agent.transactionLimit ?? agent.txLimit)} />
-                <Rule label="Approval threshold" value={money(agent.approvalThreshold)} />
+                <Rule label="Max transaction" value={money(agentAny.transactionLimit ?? agentAny.txLimit ?? 0)} />
+                <Rule label="Approval threshold" value={money(agentAny.approvalThreshold ?? agentAny.approval_threshold ?? 0)} />
                 <Rule label="Allowed token" value="USD" />
                 {!canEdit && (
                    <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
@@ -251,7 +255,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
             <div className="rounded-xl border border-border bg-black/10 p-4">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Tempo address</div>
               <div className="mt-2 flex items-center justify-between text-sm text-white">
-                {agent.walletAddress ?? agent.address}
+                {agent.walletAddress ?? agent.address ?? "No address generated"}
                 <Copy className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-white" />
               </div>
             </div>
@@ -259,7 +263,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
          
           <div className="mt-6 eyebrow">Recipient allowlist</div>
           <div className="mt-3 flex flex-wrap gap-2">
-            {(agent.recipientAllowlist ?? agent.recipients)?.map((recipient) => (
+            {(agentAny.recipientAllowlist ?? agentAny.recipient_allowlist ?? agentAny.recipients ?? [])?.map((recipient: string) => (
               <Badge key={recipient} tone="purple">{recipient}</Badge>
             ))}
           </div>
@@ -269,7 +273,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ agentid:
 
       <section className="panel mt-4">
         <div className="border-b border-border p-5">
-          <div className="eyebrow">Audit Ledger (Point 4)</div>
+          <div className="eyebrow">Audit Ledger</div>
           <h2 className="mt-1 text-base font-semibold text-white">Recent payment intents</h2>
         </div>
         <div className="flex flex-col">
@@ -293,7 +297,7 @@ function TransactionRow({ tx }: { tx: any }) {
 
   return (
     <div className="flex flex-col border-b border-border/70 last:border-0">
-      <div 
+      <div
         className={`flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between transition-colors ${hasTrace ? "cursor-pointer hover:bg-white/5" : ""}`}
         onClick={() => hasTrace && setExpanded(!expanded)}
       >
@@ -302,7 +306,7 @@ function TransactionRow({ tx }: { tx: any }) {
             {tx.purpose ?? tx.type ?? "Agent payment intent"}
             {hasTrace && <Badge tone="purple">Trace</Badge>}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">{tx.recipient} · {tx.time ?? new Date(tx.createdAt).toLocaleTimeString()}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{tx.recipient} · {tx.time ?? new Date(tx.createdAt || tx.created_at || Date.now()).toLocaleTimeString()}</div>
         </div>
         <div className="flex items-center gap-4">
           <Badge tone={tx.status === "settled" ? "success" : isBlocked ? "danger" : "warning"}>
@@ -321,16 +325,16 @@ function TransactionRow({ tx }: { tx: any }) {
               <ShieldCheck className="h-4 w-4 text-purple-400" />
               Policy Engine Evaluation Log
             </div>
-            
+           
             {tx.decision_reason && (
               <div className={`text-xs mb-3 p-2 rounded ${isBlocked ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
                 <span className="font-medium">Conclusion:</span> {tx.decision_reason}
               </div>
             )}
-            
+           
             <div className="flex flex-col gap-2">
               {tx.decision_trace.map((step: string, idx: number) => {
-                const failed = isBlocked && idx === tx.decision_trace.length - 1; 
+                const failed = isBlocked && idx === tx.decision_trace.length - 1;
                 return (
                   <div key={idx} className="flex items-start gap-2 text-xs">
                     {failed ? <AlertCircle className="h-4 w-4 text-red-500 shrink-0" /> : <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
@@ -338,7 +342,7 @@ function TransactionRow({ tx }: { tx: any }) {
                   </div>
                 )
               })}
-              
+             
               {tx.event_hash && (
                  <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                    <span>Cryptographic Event Hash:</span>
@@ -352,8 +356,6 @@ function TransactionRow({ tx }: { tx: any }) {
     </div>
   )
 }
-
-
 function Rule({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between border-b border-border/70 pb-3 last:border-0">

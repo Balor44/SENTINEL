@@ -24,7 +24,7 @@ export default async function OverviewPage() {
   const { data: { user } } = await supabase.auth.getUser();
 
 
-  // MULTI-TENANCY FIX: Get user's org and role
+  // MULTI-TENANCY: Get user's org and role
   const { data: member } = await supabase
     .from("organization_members")
     .select("organization_id, role")
@@ -36,7 +36,7 @@ export default async function OverviewPage() {
   const canEdit = member?.role === "owner" || member?.role === "admin";
 
 
-  // Fetch all dashboard data using organization_id, NOT user_id
+  // FIX: Use snake_case for created_at to ensure transactions load
   const [
     { data: state },
     { data: agents },
@@ -44,7 +44,7 @@ export default async function OverviewPage() {
   ] = await Promise.all([
     supabase.from("app_state").select("treasury, walletAddress, fleetFrozen").eq("organization_id", orgId).single(),
     supabase.from("agents").select("*").eq("organization_id", orgId),
-    supabase.from("transactions").select("*").eq("organization_id", orgId).order("createdAt", { ascending: false })
+    supabase.from("transactions").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }) 
   ]);
 
 
@@ -170,7 +170,8 @@ export default async function OverviewPage() {
                     <div className="text-sm font-medium text-white">{agent.name}</div>
                     <Badge tone={agent.status === "active" ? "success" : "warning"}>{agent.status}</Badge>
                   </div>
-                  <div className="mt-2 text-xs text-muted-foreground">Spent today {money(agent.spentToday || 0)}</div>
+                  {/* FIX: Map spent_today safely */}
+                  <div className="mt-2 text-xs text-muted-foreground">Spent today {money(agent.spent_today || agent.spentToday || 0)}</div>
                 </Link>
               ))
             )}
