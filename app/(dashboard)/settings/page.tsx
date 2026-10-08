@@ -16,7 +16,7 @@ import {
   Activity
 } from "lucide-react";
 import { Button, Badge } from "@/components/ui";
-import { PageHeader, ProfileWidget } from "@/components/page-header";
+import { PageHeader } from "@/components/page-header";
 
 
 interface NotificationSettings {
@@ -114,9 +114,8 @@ export default function SettingsPage() {
     <div className="max-w-4xl space-y-6">
       <PageHeader 
         eyebrow="System / Settings" 
-        title="Settings" 
-        description="Workspace preferences and security configuration."
-        action={<ProfileWidget />}
+        title="Settings & Profile" 
+        description="Operator profile, workspace preferences and real-time security configuration."
       />
 
 

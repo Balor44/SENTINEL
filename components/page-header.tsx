@@ -6,32 +6,6 @@ import { UserRound, Layers, Coins } from "lucide-react";
 import { createBrowserClient } from "@supabase/ssr";
 
 
-// 1. Your original PageHeader layout
-export function PageHeader({
-  eyebrow,
-  title,
-  description,
-  action,
-}: {
-  eyebrow?: string;
-  title: string;
-  description?: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-      <div>
-        {eyebrow && <div className="eyebrow mb-2">{eyebrow}</div>}
-        <h1 className="page-title">{title}</h1>
-        {description && <p className="subtle mt-2 max-w-2xl">{description}</p>}
-      </div>
-      {action}
-    </div>
-  );
-}
-
-
-// 2. The new telemetry widget
 export function ProfileWidget() {
   const [activeCount, setActiveCount] = useState(0);
   const [totalBalance, setTotalBalance] = useState(0);
@@ -86,6 +60,33 @@ export function ProfileWidget() {
             ${totalBalance.toFixed(2)}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+export function PageHeader({
+  eyebrow,
+  title,
+  description,
+  action,
+}: {
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <div>
+        {eyebrow && <div className="eyebrow mb-2">{eyebrow}</div>}
+        <h1 className="page-title">{title}</h1>
+        {description && <p className="subtle mt-2 max-w-2xl">{description}</p>}
+      </div>
+      <div className="flex items-center gap-4">
+        {action}
+        <ProfileWidget />
       </div>
     </div>
   );
