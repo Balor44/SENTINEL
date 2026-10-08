@@ -39,10 +39,10 @@ export async function POST(req: Request) {
       messages: await convertToModelMessages(messages),
       stopWhen: isStepCount(5),
       instructions:
-        "You are Sentinel Copilot, an elite AI financial commander. You regulate autonomous agents. Use your tools to fetch data, update agents, and manage policies. If a user says 'pause agent X', use the updateAgentPolicy tool. If they ask to create a rule or policy, use createPolicy. If they want to execute, enable, or trigger a policy, use executePolicy.",
+        "You are Sentinel Copilot, an elite AI financial commander. You regulate autonomous agents. Use your tools to fetch data, create, pause, modify, and delete agents, and manage policies. If a user says 'pause agent X', use the updateAgentPolicy tool. If they ask to create an agent, use createAgent. If they ask to delete an agent, use deleteAgent. If they ask to create a rule or policy, use createPolicy. If they want to execute, enable, or trigger a policy, use executePolicy.",
       tools: {
         getFleetStatus: tool({
-          description: 'Get all agents, balances, and budgets.',
+          description: 'Get all agents, statuses, and balances.',
           inputSchema: z.object({}),
           execute: async () => {
             if (!user?.id) return { error: 'Unauthorized' };
@@ -53,19 +53,35 @@ export async function POST(req: Request) {
             return data || [];
           },
         }),
+        createAgent: tool({
+          description: 'Create a brand new agent.',
+          inputSchema: z.object({
+            name: z.string().describe("The name of the new agent"),
+            status: z.enum(['active', 'paused']).optional().default('active'),
+          }),
+          execute: async ({ name, status }) => {
+            if (!user?.id) return { error: 'Unauthorized' };
+            const { data, error } = await supabase
+              .from('agents')
+              .insert([{ name, status, user_id: user.id }])
+              .select('id, name, status, balance')
+              .single();
+
+
+            if (error) return { error: error.message };
+            return { success: true, agent: data };
+          },
+        }),
         updateAgentPolicy: tool({
-          description:
-            'Dynamically manage and regulate an agent. Pause/activate it or change its daily budget.',
+          description: 'Dynamically manage and regulate an agent. Pause or activate it.',
           inputSchema: z.object({
             agent_name: z.string().describe("The name of the agent to update (e.g. 'Marketing')"),
             status: z.enum(['active', 'paused']).optional(),
-            daily_budget: z.number().optional(),
           }),
-          execute: async ({ agent_name, status, daily_budget }) => {
+          execute: async ({ agent_name, status }) => {
             if (!user?.id) return { error: 'Unauthorized' };
             const updates: any = {};
             if (status !== undefined) updates.status = status;
-            if (daily_budget !== undefined) updates.daily_budget = daily_budget;
 
 
             const { data, error } = await supabase
@@ -73,12 +89,32 @@ export async function POST(req: Request) {
               .update(updates)
               .ilike('name', `%${agent_name}%`)
               .eq('user_id', user.id)
-              .select('name, status, daily_budget')
+              .select('name, status')
               .single();
 
 
             if (error) return { error: error.message };
             return { success: true, updated: data };
+          },
+        }),
+        deleteAgent: tool({
+          description: 'Delete an existing agent.',
+          inputSchema: z.object({
+            agent_name: z.string().describe("The name of the agent to delete"),
+          }),
+          execute: async ({ agent_name }) => {
+            if (!user?.id) return { error: 'Unauthorized' };
+            const { data, error } = await supabase
+              .from('agents')
+              .delete()
+              .ilike('name', `%${agent_name}%`)
+              .eq('user_id', user.id)
+              .select('name')
+              .single();
+
+
+            if (error) return { error: error.message };
+            return { success: true, deleted: data };
           },
         }),
         createPolicy: tool({
@@ -125,7 +161,6 @@ export async function POST(req: Request) {
             if (enabled !== undefined) updates.enabled = enabled;
             if (active !== undefined) updates.active = active;
             
-            // If the user just says "execute policy X", we turn it on
             if (Object.keys(updates).length === 0) {
                updates.active = true;
                updates.enabled = true;
