@@ -59,24 +59,27 @@ export async function POST(req: Request) {
           description: 'Create a brand new agent.',
           inputSchema: z.object({
             name: z.string().describe("The name of the new agent"),
-            status: z.enum(['active', 'paused']).optional().default('active'),
           }),
-          execute: async ({ name, status }) => {
+          execute: async ({ name }) => {
             if (!user?.id) return { error: 'Unauthorized' };
             
-            // 🔥 Generate the required ID natively to prevent the Supabase error
             const id = crypto.randomUUID();
 
 
             const { data, error } = await supabase
               .from('agents')
-              .insert([{ id, name, status, user_id: user.id }])
+              .insert([{ id, name, status: 'pending_escrow', user_id: user.id }])
               .select('id, name, status, balance')
               .single();
 
 
             if (error) return { error: error.message };
-            return { success: true, agent: data };
+            
+            return { 
+              success: true, 
+              agent: data,
+              escrow_action_required: "Agent created locally. Instruct the user to navigate to their Sentinel dashboard to sign the Tempo transaction via Web3 wallet to finalize funding."
+            };
           },
         }),
         updateAgentPolicy: tool({
