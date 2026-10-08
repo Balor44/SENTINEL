@@ -38,8 +38,10 @@ export async function POST(req: Request) {
       model: groq('openai/gpt-oss-20b'),
       messages: await convertToModelMessages(messages),
       stopWhen: isStepCount(5),
+      // 🔥 Updated instructions force the bot to ask for details before executing
       instructions:
-        "You are Sentinel Copilot, an elite AI financial commander. You regulate autonomous agents. Use your tools to fetch data, create, pause, modify, and delete agents, and manage policies. If a user says 'pause agent X', use the updateAgentPolicy tool. If they ask to create an agent, use createAgent. If they ask to delete an agent, use deleteAgent. If they ask to create a rule or policy, use createPolicy. If they want to execute, enable, or trigger a policy, use executePolicy.",
+        "You are Sentinel Copilot, an elite AI financial commander. You regulate autonomous agents. Use your tools to fetch data, create, pause, modify, and delete agents, and manage policies. " +
+        "CRITICAL RULE FOR CREATING AGENTS: When a user asks to create an agent, DO NOT create it immediately. FIRST, ask them for its specific policy details (e.g., daily budget, transaction limits, approval thresholds). Once they provide the limits, call createAgent, and then immediately call createPolicy using the new agent's ID to link them.",
       tools: {
         getFleetStatus: tool({
           description: 'Get all agents, statuses, and balances.',
@@ -61,9 +63,14 @@ export async function POST(req: Request) {
           }),
           execute: async ({ name, status }) => {
             if (!user?.id) return { error: 'Unauthorized' };
+            
+            // 🔥 Generate the required ID natively to prevent the Supabase error
+            const id = crypto.randomUUID();
+
+
             const { data, error } = await supabase
               .from('agents')
-              .insert([{ name, status, user_id: user.id }])
+              .insert([{ id, name, status, user_id: user.id }])
               .select('id, name, status, balance')
               .single();
 
