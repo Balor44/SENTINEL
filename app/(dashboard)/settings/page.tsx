@@ -12,11 +12,10 @@ import {
   Eye, 
   EyeOff, 
   RefreshCw,
-  Wallet,
   Activity
 } from "lucide-react";
 import { Button, Badge } from "@/components/ui";
-import { PageHeader } from "@/components/page-header";
+import { createBrowserClient } from "@supabase/ssr";
 
 
 interface NotificationSettings {
@@ -33,9 +32,9 @@ export default function SettingsPage() {
 
 
   // Profile & Workspace state
-  const [orgName, setOrgName] = useState("Northstar Labs");
+  const [orgName, setOrgName] = useState("");
   const [defaultToken, setDefaultToken] = useState("pathUSD");
-  const [controllerEmail, setControllerEmail] = useState("operator@sentinel.network");
+  const [controllerEmail, setControllerEmail] = useState("Loading...");
 
 
   // API Key state
@@ -50,15 +49,37 @@ export default function SettingsPage() {
   });
 
 
-  // Load saved preferences on mount
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
+
+  // Fetch real user data and load saved preferences on mount
   useEffect(() => {
+    async function fetchUser() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) {
+        setControllerEmail(user.email);
+      } else {
+        setControllerEmail("Unknown User");
+      }
+    }
+    fetchUser();
+
+
     const cachedOrg = localStorage.getItem("sentinel_org");
     const cachedToken = localStorage.getItem("sentinel_token");
     const cachedKey = localStorage.getItem("sentinel_api_key");
     const cachedNotifs = localStorage.getItem("sentinel_notifs");
 
 
-    if (cachedOrg) setOrgName(cachedOrg);
+    if (cachedOrg) {
+      setOrgName(cachedOrg);
+    } else {
+      setOrgName("My Workspace"); // Drops the generic Northstar Labs
+    }
+    
     if (cachedToken) setDefaultToken(cachedToken);
     if (cachedKey) setApiKey(cachedKey);
     if (cachedNotifs) {
@@ -66,7 +87,7 @@ export default function SettingsPage() {
         setNotifications(JSON.parse(cachedNotifs));
       } catch {}
     }
-  }, []);
+  }, [supabase.auth]);
 
 
   const handleRotateKey = () => {
@@ -112,11 +133,13 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <PageHeader 
-        eyebrow="System / Settings" 
-        title="Settings & Profile" 
-        description="Operator profile, workspace preferences and real-time security configuration."
-      />
+      <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+        <div>
+          <div className="eyebrow mb-2">System / Settings</div>
+          <h1 className="page-title">Settings & Profile</h1>
+          <p className="subtle mt-2 max-w-2xl">Operator profile, workspace preferences, and real-time security configuration.</p>
+        </div>
+      </div>
 
 
       <div className="space-y-4">
@@ -133,9 +156,10 @@ export default function SettingsPage() {
             <div>
               <label className="text-xs font-medium text-muted-foreground">Operator Email</label>
               <input 
-                className="input mt-2" 
+                className="input mt-2 bg-black/40 text-muted-foreground cursor-not-allowed" 
                 value={controllerEmail}
-                onChange={(e) => setControllerEmail(e.target.value)} 
+                readOnly
+                title="Email is locked to your authenticated session"
               />
             </div>
             <div>
@@ -171,6 +195,7 @@ export default function SettingsPage() {
                 className="input mt-2" 
                 value={orgName} 
                 onChange={(e) => setOrgName(e.target.value)} 
+                placeholder="e.g. Acme Corp"
               />
             </div>
             <div>
@@ -309,7 +334,7 @@ export default function SettingsPage() {
 
 
         {/* Save Bar */}
-        <div className="flex items-center gap-4 pt-2">
+        <div className="flex items-center gap-4 pt-2 pb-6">
           <Button 
             variant="primary" 
             onClick={handleSave}
