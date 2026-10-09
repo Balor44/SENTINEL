@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { ArrowRight, Bot, MoreHorizontal, Plus, ShieldAlert, WalletCards } from "lucide-react";
+import { ArrowRight, Bot, MoreHorizontal, Plus, ShieldAlert, WalletCards, Zap } from "lucide-react";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { money } from "@/lib/utils";
 import { Badge, Button, ProgressBar } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
@@ -11,7 +12,6 @@ export const dynamic = "force-dynamic";
 
 
 export default async function AgentsPage() {
-  // 1. Initialize the authenticated Supabase client for Server Components
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,20 +19,40 @@ export default async function AgentsPage() {
     {
       cookies: {
         getAll() { return cookieStore.getAll(); },
-        // We leave setAll empty in Server Components because they only read data
-        setAll() {} 
+        setAll() {}
       }
     }
   );
 
 
-  // 2. Fetch live agents securely using the user's session cookie
   const { data: agentsData } = await supabase
     .from("agents")
     .select("*")
     .order("createdAt", { ascending: false });
-    
+   
   const agents = agentsData || [];
+  
+  // Split fleet into pending escrow vs active/risk
+  const pendingAgents = agents.filter(a => a.status === "pending_escrow");
+  const activeAgents = agents.filter(a => a.status !== "pending_escrow");
+
+
+  // Native Next.js Server Action: Mimics Web3 signing and clears escrow
+  async function fundAgentAction(formData: FormData) {
+    "use server";
+    const agentId = formData.get("agentId") as string;
+    
+    const cookieStore = await cookies();
+    const supabaseAction = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
+    );
+
+
+    await supabaseAction.from("agents").update({ status: "active" }).eq("id", agentId);
+    revalidatePath("/agents");
+  }
 
 
   return (
@@ -43,8 +63,40 @@ export default async function AgentsPage() {
         description="Every agent gets a scoped identity, budget and policy."
         action={<Link href="/agents/new"><Button variant="primary"><Plus className="h-4 w-4" />Create agent</Button></Link>}
       />
+
+
+      {/* NEW: Pending Escrow Action Card */}
+      {pendingAgents.length > 0 && (
+        <div className="mb-8 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 shadow-lg shadow-emerald-500/5">
+          <div className="mb-4 flex items-center gap-2">
+            <Zap className="h-5 w-5 text-emerald-400" />
+            <h2 className="text-sm font-semibold text-white">Action Required: Pending Escrow</h2>
+          </div>
+          <div className="space-y-3">
+            {pendingAgents.map(agent => (
+              <div key={agent.id} className="flex items-center justify-between rounded-lg border border-border bg-black/40 p-4">
+                <div>
+                  <div className="font-medium text-white">{agent.name}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Awaiting initial allocation of <span className="font-mono text-emerald-400">{money(agent.balance || 0)}</span> on Moderato (42431)
+                  </div>
+                </div>
+                <form action={fundAgentAction}>
+                  <input type="hidden" name="agentId" value={agent.id} />
+                  <Button variant="primary" type="submit" className="bg-emerald-600 text-white hover:bg-emerald-500">
+                    Sign & Fund via Tempo
+                  </Button>
+                </form>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+
+      {/* Standard Active Fleet Grid */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {agents.map((agent) => (
+        {activeAgents.map((agent) => (
           <Link key={agent.id} href={`/agents/${agent.id}`} className="panel panel-hover block p-5">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">

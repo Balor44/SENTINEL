@@ -41,7 +41,7 @@ export async function POST(req: Request) {
       // 🔥 Updated instructions force the bot to ask for details before executing
       instructions:
         "You are Sentinel Copilot, an elite AI financial commander. You regulate autonomous agents. Use your tools to fetch data, create, pause, modify, and delete agents, and manage policies. " +
-        "CRITICAL RULE FOR CREATING AGENTS: When a user asks to create an agent, DO NOT create it immediately. FIRST, ask them for its specific policy details (e.g., daily budget, transaction limits, approval thresholds). Once they provide the limits, call createAgent, and then immediately call createPolicy using the new agent's ID to link them.",
+        "CRITICAL RULE FOR CREATING AGENTS: When a user asks to create an agent, DO NOT create it immediately. FIRST, ask them for its specific policy details AND its initial allocation amount in pathUSD. Once they provide the limits and allocation, call createAgent with that initial allocation, and then immediately call createPolicy using the new agent's ID to link them.",
       tools: {
         getFleetStatus: tool({
           description: 'Get all agents, statuses, and balances.',
@@ -56,19 +56,27 @@ export async function POST(req: Request) {
           },
         }),
         createAgent: tool({
-          description: 'Create a brand new agent.',
+          description: 'Create a brand new agent with an initial funding allocation.',
           inputSchema: z.object({
             name: z.string().describe("The name of the new agent"),
+            initial_allocation: z.number().describe("The initial amount to fund the agent in pathUSD"),
           }),
-          execute: async ({ name }) => {
+          execute: async ({ name, initial_allocation }) => {
             if (!user?.id) return { error: 'Unauthorized' };
             
             const id = crypto.randomUUID();
 
 
+            // 🔥 We now save the initial_allocation to the balance while it waits in escrow
             const { data, error } = await supabase
               .from('agents')
-              .insert([{ id, name, status: 'pending_escrow', user_id: user.id }])
+              .insert([{ 
+                id, 
+                name, 
+                balance: initial_allocation, 
+                status: 'pending_escrow', 
+                user_id: user.id 
+              }])
               .select('id, name, status, balance')
               .single();
 
@@ -78,7 +86,7 @@ export async function POST(req: Request) {
             return { 
               success: true, 
               agent: data,
-              escrow_action_required: "Agent created locally. Instruct the user to navigate to their Sentinel dashboard to sign the Tempo transaction via Web3 wallet to finalize funding."
+              escrow_action_required: `Agent created locally with a pending balance of ${initial_allocation}. Instruct the user to navigate to their Sentinel dashboard to sign the Tempo transaction via their Web3 wallet to finalize funding.`
             };
           },
         }),
