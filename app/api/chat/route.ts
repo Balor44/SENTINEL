@@ -149,9 +149,12 @@ export async function POST(req: Request) {
           execute: async (policyData) => {
             if (!user?.id) return { error: 'Unauthorized' };
             
+            const id = crypto.randomUUID();
+
             const { data, error } = await supabase
               .from('policies')
               .insert([{ 
+                id,
                 ...policyData, 
                 user_id: user.id, 
                 enabled: true, 
