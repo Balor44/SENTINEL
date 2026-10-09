@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { ArrowRight, Bot, MoreHorizontal, Plus, ShieldAlert, WalletCards, Zap } from "lucide-react";
+import { ArrowRight, MoreHorizontal, Plus, ShieldAlert, WalletCards, Zap } from "lucide-react";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { revalidatePath } from "next/cache";
 import { money } from "@/lib/utils";
 import { Badge, Button, ProgressBar } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
+import { FundAgentButton } from "@/components/fund-agent-button";
 
 
 export const dynamic = "force-dynamic";
@@ -37,24 +37,6 @@ export default async function AgentsPage() {
   const activeAgents = agents.filter(a => a.status !== "pending_escrow");
 
 
-  // Native Next.js Server Action: Mimics Web3 signing and clears escrow
-  async function fundAgentAction(formData: FormData) {
-    "use server";
-    const agentId = formData.get("agentId") as string;
-    
-    const cookieStore = await cookies();
-    const supabaseAction = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-    );
-
-
-    await supabaseAction.from("agents").update({ status: "active" }).eq("id", agentId);
-    revalidatePath("/agents");
-  }
-
-
   return (
     <div>
       <PageHeader
@@ -65,7 +47,7 @@ export default async function AgentsPage() {
       />
 
 
-      {/* NEW: Pending Escrow Action Card */}
+      {/* Pending Escrow Action Card */}
       {pendingAgents.length > 0 && (
         <div className="mb-8 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 shadow-lg shadow-emerald-500/5">
           <div className="mb-4 flex items-center gap-2">
@@ -81,12 +63,7 @@ export default async function AgentsPage() {
                     Awaiting initial allocation of <span className="font-mono text-emerald-400">{money(agent.balance || 0)}</span> on Moderato (42431)
                   </div>
                 </div>
-                <form action={fundAgentAction}>
-                  <input type="hidden" name="agentId" value={agent.id} />
-                  <Button variant="primary" type="submit" className="bg-emerald-600 text-white hover:bg-emerald-500">
-                    Sign & Fund via Tempo
-                  </Button>
-                </form>
+                <FundAgentButton agentId={agent.id} amount={agent.balance || 0} />
               </div>
             ))}
           </div>
