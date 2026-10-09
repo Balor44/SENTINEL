@@ -41,7 +41,9 @@ export async function POST(req: Request) {
       // 🔥 Updated instructions force the bot to ask for details before executing
       instructions:
         "You are Sentinel Copilot, an elite AI financial commander. You regulate autonomous agents. Use your tools to fetch data, create, pause, modify, and delete agents, and manage policies. " +
-        "CRITICAL RULE FOR CREATING AGENTS: When a user asks to create an agent, DO NOT create it immediately. FIRST, ask them for its specific policy details AND its initial allocation amount in pathUSD. Once they provide the limits and allocation, call createAgent with that initial allocation, and then immediately call createPolicy using the new agent's ID to link them.",
+        "CRITICAL RULE FOR CREATING AGENTS: When a user asks to create an agent, DO NOT create it immediately. FIRST, ask them for its specific policy details (daily budget, daily limit, transaction limit, approval threshold) AND its initial allocation amount in pathUSD. " +
+        "CRITICAL RULE FOR POLICIES: NEVER use generic, dummy, or default values (like 100, 10, or 25). You MUST extract the EXACT numerical limits provided by the user. " +
+        "Once they provide the limits and allocation, call createAgent with that initial allocation, and then immediately call createPolicy using the exact limits provided by the user and the new agent's ID.",
       tools: {
         getFleetStatus: tool({
           description: 'Get all agents, statuses, and balances.',
@@ -136,25 +138,27 @@ export async function POST(req: Request) {
           },
         }),
         createPolicy: tool({
-          description: 'Create a new financial or operational policy.',
+          description: 'Create a new financial or operational policy. MUST use exact numbers provided by the user.',
           inputSchema: z.object({
             name: z.string().describe("The name of the policy"),
             description: z.string().optional().describe("What the policy does"),
             agentId: z.string().optional().describe("The ID of the agent this applies to"),
-            dailyBudget: z.number().optional(),
-            dailyLimit: z.number().optional(),
-            txLimit: z.number().optional(),
-            approvalThreshold: z.number().optional(),
+            // 🔥 Removed .optional() and added aggressive descriptions to force exact values
+            dailyBudget: z.number().describe("The exact daily budget number requested by the user"),
+            dailyLimit: z.number().describe("The exact daily limit number requested by the user"),
+            txLimit: z.number().describe("The exact per-transaction limit requested by the user"),
+            approvalThreshold: z.number().describe("The exact approval threshold requested by the user"),
           }),
           execute: async (policyData) => {
             if (!user?.id) return { error: 'Unauthorized' };
             
             const id = crypto.randomUUID();
 
+
             const { data, error } = await supabase
               .from('policies')
               .insert([{ 
-                id,
+                id, 
                 ...policyData, 
                 user_id: user.id, 
                 enabled: true, 
