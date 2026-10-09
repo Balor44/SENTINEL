@@ -24,6 +24,7 @@ import { useAccount } from "wagmi";
 import { WalletConnection } from "@/components/wallet-connection";
 import { useEffect, useState } from "react";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { createBrowserClient } from "@supabase/ssr";
 
 
 // ============================================================================
@@ -108,7 +109,7 @@ export default function LandingPage() {
 
   // Navigation & Loading States
   const [activeView, setActiveView] = useState<
-    "checking" | "default" | "create" | "import" | "handoff" | "unlock"
+    "checking" | "signedout" | "default" | "create" | "import" | "handoff" | "unlock"
   >("checking");
   const [isRedirecting, setIsRedirecting] = useState(false); // <-- The Redirect Lock
 
@@ -136,28 +137,37 @@ export default function LandingPage() {
 
     async function checkSetup() {
       try {
-        const response = await fetch("/api/setup", {
-          cache: "no-store",
-        });
+        // 1. Who is visiting? Ask Supabase directly. /api/setup is a protected route,
+        //    so a signed out visitor would get the login page HTML back instead of JSON.
+        const supabase = createBrowserClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        );
+        const { data: { user } } = await supabase.auth.getUser();
+        if (cancelled) return;
 
+        // Signed out visitors stay on the landing page and see a sign in call to action.
+        if (!user) {
+          setActiveView("signedout");
+          return;
+        }
 
+        // 2. Signed in: has this user finished onboarding?
+        const response = await fetch("/api/setup", { cache: "no-store" });
         if (!response.ok) throw new Error("Setup check failed");
-        
+
         const data = await response.json();
         if (cancelled) return;
 
-
-        // First-run users always go to onboarding. Lock the UI during transition.
+        // First run users go to onboarding. Lock the UI during the transition.
         if (!data?.setup?.onboardingComplete) {
           setIsRedirecting(true);
           router.replace("/onboarding");
           return;
         }
 
-
-        // Only inspect the encrypted vault after onboarding is complete.
+        // Onboarding is done. Only now inspect the encrypted vault.
         const vault = localStorage.getItem("sentinel_secure_vault");
-
 
         if (vault) {
           try {
@@ -171,11 +181,9 @@ export default function LandingPage() {
           setActiveView("default");
         }
       } catch (error) {
+        // Never redirect on an error. That is what hid the landing page before.
         console.error("Failed to determine Sentinel setup state:", error);
-        if (!cancelled) {
-          setIsRedirecting(true);
-          router.replace("/onboarding");
-        }
+        if (!cancelled) setActiveView("signedout");
       }
     }
 
@@ -292,6 +300,23 @@ export default function LandingPage() {
     }
 
 
+    if (activeView === "signedout") {
+      return (
+        <div className="flex w-full flex-col gap-3 animate-in fade-in">
+          <Link href="/login" className="w-full">
+            <Button variant="primary" className="h-12 w-full text-base shadow-[0_0_40px_-10px_rgba(139,92,246,0.5)]">
+              Get Started
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </Link>
+          <p className="text-xs text-muted-foreground">
+            Sign in or create an account to set up your treasury and agents.
+          </p>
+        </div>
+      );
+    }
+
+
     if (activeView === "unlock") {
       return (
         <form onSubmit={handleUnlockVault} className="flex flex-col text-left animate-in fade-in">
@@ -352,7 +377,7 @@ export default function LandingPage() {
           </div>
 
 
-          <Link href="/agents" className="w-full">
+          <Link href="/overview" className="w-full">
             <Button variant="primary" className="h-11 w-full bg-emerald-600 hover:bg-emerald-500 text-white">
               I have saved this safely
               <ArrowRight className="ml-2 h-4 w-4" />
@@ -457,7 +482,7 @@ export default function LandingPage() {
           </div>
 
 
-          <Link href="/agents" className="w-full">
+          <Link href="/overview" className="w-full">
             <Button variant="primary" className="h-12 w-full text-base shadow-[0_0_40px_-10px_rgba(139,92,246,0.5)]">
               Enter Workspace
               <ArrowRight className="ml-2 h-4 w-4" />
@@ -492,6 +517,14 @@ export default function LandingPage() {
 
 
         <WalletConnection />
+
+        <Link
+          href="/overview"
+          className="mt-1 flex items-center justify-center gap-1 text-xs text-muted-foreground transition-colors hover:text-white"
+        >
+          Skip and go to dashboard
+          <ArrowRight className="h-3 w-3" />
+        </Link>
       </div>
     );
   };

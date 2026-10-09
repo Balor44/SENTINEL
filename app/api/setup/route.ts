@@ -2,11 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { id } from "@/lib/utils";
-
-
 export const dynamic = "force-dynamic";
-
-
 export async function GET() {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -14,21 +10,13 @@ export async function GET() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
   );
-
-
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ organization: {}, setup: {}, treasury: {}, agents: [], policies: [] });
-
-
   const { data: agents } = await supabase.from("agents").select("*");
   const { data: policies } = await supabase.from("policies").select("*");
   // Fetch specifically this user's state, not the "singleton"
   const { data: state } = await supabase.from("app_state").select("*").eq("user_id", user.id).single();
-
-
   const appState = state || { organization: {}, setup: {}, treasury: {} };
-
-
   return NextResponse.json({
     organization: appState.organization || {},
     setup: appState.setup || {},
@@ -37,8 +25,6 @@ export async function GET() {
     policies: policies || []
   });
 }
-
-
 export async function POST(req: Request) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -46,15 +32,9 @@ export async function POST(req: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
   );
-
-
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-
   const body = await req.json();
-
-
   // 1. Load user's actual state
   const { data: stateData } = await supabase.from("app_state").select("*").eq("user_id", user.id).single();
   let state = stateData || {
@@ -64,16 +44,12 @@ export async function POST(req: Request) {
     walletAddress: null
   };
   let stateUpdated = false;
-
-
   // 2. Organization Update
   if (body.organizationName) {
     state.organization = state.organization || {};
     state.organization.name = String(body.organizationName).trim() || state.organization.name;
     stateUpdated = true;
   }
-
-
   // 3. Treasury / Setup Update
   if (body.treasuryWallet) {
     const wallet = String(body.treasuryWallet).trim();
@@ -86,26 +62,20 @@ export async function POST(req: Request) {
     state.walletAddress = wallet; // Syncs to the top-level column we added earlier
     stateUpdated = true;
   }
-
-
   if (body.treasuryReady) {
     state.setup = state.setup || {};
     state.setup.treasuryReady = true;
     stateUpdated = true;
   }
- 
   if (body.complete) {
     state.setup = state.setup || {};
     state.setup.onboardingComplete = true;
     stateUpdated = true;
   }
-
-
   // 4. Fund Agent
   if (body.fundAgentId) {
     const { data: target } = await supabase.from("agents").select("*").eq("id", body.fundAgentId).single();
     const value = Number(body.amount || 0);
-   
     if (target && Number.isFinite(value) && value > 0) {
       await supabase.from("agents").update({ balance: (target.balance || 0) + value }).eq("id", body.fundAgentId);
       state.treasury = state.treasury || {};
@@ -114,18 +84,14 @@ export async function POST(req: Request) {
       stateUpdated = true;
     }
   }
-
-
   // 5. Policy Update
   if (body.policyUpdate) {
     const { agentId, dailyBudget, transactionLimit, approvalThreshold, recipient } = body.policyUpdate;
-   
     const { data: targetAgent } = await supabase
       .from("agents")
       .select("*")
       .or(`id.eq.${agentId},name.eq.${agentId}`)
       .single();
-   
     if (targetAgent) {
       const agentUpdate: any = {};
       if (Number.isFinite(dailyBudget)) {
@@ -145,8 +111,6 @@ export async function POST(req: Request) {
         agentUpdate.recipients = [cleanRecipient];
       }
       await supabase.from("agents").update(agentUpdate).eq("id", targetAgent.id);
-
-
       const { data: policy } = await supabase.from("policies").select("*").eq("agentId", targetAgent.id).single();
       if (policy) {
         const policyUpdate: any = {};
@@ -169,20 +133,20 @@ export async function POST(req: Request) {
       }
     }
   }
-
-
   // 6. Agent Creation
   if (body.agent) {
     const a = body.agent;
     const agentName = (a.name || "ResearchBot").trim();
-   
     // Check if agent already exists by name for THIS user
-    const { data: existingAgent } = await supabase.from("agents").select("id").eq("name", agentName).single();
-   
+    const { data: existingAgent } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("name", agentName)
+      .maybeSingle();
     if (!existingAgent) {
       const agentId = a.id || id("agent");
       const recipients = Array.isArray(a.recipients) ? a.recipients : [];
-     
       const { error: insertErr } = await supabase.from("agents").insert({
         id: agentId,
         user_id: user.id, // CRITICAL FIX: Links to your account
@@ -203,14 +167,10 @@ export async function POST(req: Request) {
         recipients: recipients,
         payments: 0,
       });
-
-
       if (insertErr) {
         console.error("Supabase Agent Insert Error:", insertErr);
         return NextResponse.json({ error: `Database Error: ${insertErr.message}` }, { status: 500 });
       }
-
-
       await supabase.from("policies").insert({
         id: id("policy"),
         user_id: user.id, // CRITICAL FIX: Links to your account
@@ -229,8 +189,6 @@ export async function POST(req: Request) {
       });
     }
   }
-
-
   // 7. Persist Global State to user's row
   if (stateUpdated) {
     await supabase.from("app_state").upsert({
@@ -242,15 +200,10 @@ export async function POST(req: Request) {
       walletAddress: state.walletAddress || null
     });
   }
-
-
   const { data: finalAgents } = await supabase.from("agents").select("*");
   const { data: finalPolicies } = await supabase.from("policies").select("*");
   const { data: finalStateData } = await supabase.from("app_state").select("*").eq("user_id", user.id).single();
- 
   const finalState = finalStateData || { organization: {}, setup: {}, treasury: {} };
-
-
   return NextResponse.json({
     organization: finalState.organization || {},
     setup: finalState.setup || {},
@@ -259,5 +212,3 @@ export async function POST(req: Request) {
     policies: finalPolicies || []
   });
 }
-
-
